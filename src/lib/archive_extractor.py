@@ -108,24 +108,24 @@ def extract_archive():
             except Exception as e:
                 error_details += f"zipfile error: {e}; "
 
-        # 2. Try tar.exe (bsdtar) which handles ZIP, RAR, TAR, GZ natively on Windows
+        # 2. Try tar (bsdtar) which handles ZIP, RAR, TAR, GZ natively
+        tar_tool = shutil.which("tar") or shutil.which("tar.exe") or "tar"
         if not unpacked_successfully:
             try:
-                # tar -xf archive_path -C extracted_dir
-                tar_cmd = ["tar.exe", "-xf", archive_path, "-C", extracted_dir]
+                tar_cmd = [tar_tool, "-xf", archive_path, "-C", extracted_dir]
                 proc = subprocess.run(tar_cmd, capture_output=True, text=True, timeout=30)
                 if proc.returncode == 0:
                     unpacked_successfully = True
                 else:
-                    error_details += f"tar.exe exit {proc.returncode}: {proc.stderr}; "
+                    error_details += f"tar exit {proc.returncode}: {proc.stderr}; "
             except Exception as e:
-                error_details += f"tar.exe error: {e}; "
+                error_details += f"tar error: {e}; "
 
         # 3. If still not unpacked and is rar, try rarfile if available
         if not unpacked_successfully and is_rar:
             try:
                 import rarfile
-                rarfile.BSDTAR_TOOL = "tar.exe"
+                rarfile.BSDTAR_TOOL = tar_tool
                 try:
                     rarfile.tool_setup(unrar=False, bsdtar=True)
                 except Exception:
@@ -137,7 +137,7 @@ def extract_archive():
                 error_details += f"rarfile error: {e}; "
 
         if not unpacked_successfully:
-            # Fallback: check if tar.exe extracted any files anyway despite warnings
+            # Fallback: check if tar extracted any files anyway despite warnings
             extracted_files = [os.path.join(dp, f) for dp, dn, filenames in os.walk(extracted_dir) for f in filenames]
             if len(extracted_files) > 0:
                 unpacked_successfully = True

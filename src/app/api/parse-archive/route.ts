@@ -19,8 +19,9 @@ export async function POST(request: Request) {
     // Path to python archive extractor
     const scriptPath = path.join(process.cwd(), 'src', 'lib', 'archive_extractor.py');
 
-    // Run python process
-    const pyProcess = spawn('python', [scriptPath]);
+    // Run python process (python on Windows, python3 on Linux/macOS)
+    const pythonCmd = process.env.PYTHON_CMD || (process.platform === 'win32' ? 'python' : 'python3');
+    const pyProcess = spawn(pythonCmd, [scriptPath]);
 
     const resultPromise = new Promise<any>((resolve) => {
       let outputBuffer = Buffer.alloc(0);

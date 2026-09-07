@@ -17,8 +17,9 @@ export async function POST(request: Request) {
     // Path to python script
     const scriptPath = path.join(process.cwd(), 'src', 'lib', 'pdf_extractor.py');
 
-    // Run python extractor
-    const pyProcess = spawn('python', [scriptPath]);
+    // Run python extractor (python on Windows, python3 on Linux/macOS)
+    const pythonCmd = process.env.PYTHON_CMD || (process.platform === 'win32' ? 'python' : 'python3');
+    const pyProcess = spawn(pythonCmd, [scriptPath]);
 
     const resultPromise = new Promise<{ success: boolean; text?: string; numPages?: number; error?: string }>((resolve) => {
       let outputBuffer = Buffer.alloc(0);
