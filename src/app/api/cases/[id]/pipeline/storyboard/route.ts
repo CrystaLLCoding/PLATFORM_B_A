@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { storage } from '@/lib/storage';
 import { generateDirectorStoryboard } from '@/lib/videoDirectorEngine';
 import { VideoPipelineProject, VisualStyle, StoryboardScene } from '@/lib/videoPipelineTypes';
+import { populateScenesAudio } from '@/lib/audioSynthesizer';
 
 export async function GET(
   request: Request,
@@ -15,12 +16,32 @@ export async function GET(
     }
 
     if (businessCase.pipelineProject) {
+      // If any scenes are missing audio, populate them automatically so the player always has sound
+      const missingAudio = businessCase.pipelineProject.scenes.some(s => !s.audioUrl);
+      if (missingAudio) {
+        try {
+          const enrichedScenes = await populateScenesAudio(businessCase.pipelineProject.scenes);
+          businessCase.pipelineProject.scenes = enrichedScenes;
+          storage.updateCasePipelineProject(id, businessCase.pipelineProject);
+        } catch (e) {
+          console.warn('[GET storyboard] Audio auto-population warning:', e);
+        }
+      }
       return NextResponse.json({ success: true, project: businessCase.pipelineProject });
     }
 
     // Auto-generate initial storyboard if not existing
-    const defaultStyle: VisualStyle = 'cinematic_realistic';
-    const scenes = await generateDirectorStoryboard(businessCase, businessCase.report, defaultStyle);
+    const defaultStyle: VisualStyle = 'isometric_3d';
+    const rawScenes = await generateDirectorStoryboard(businessCase, businessCase.report, defaultStyle);
+    
+    // Automatically synthesize initial audio for zero-latency instant playback
+    let scenes = rawScenes;
+    try {
+      scenes = await populateScenesAudio(rawScenes);
+    } catch (e) {
+      console.warn('[GET storyboard] Initial audio pre-synthesis warning:', e);
+    }
+
     const totalDuration = scenes.reduce((sum, s) => sum + s.durationSeconds, 0);
 
     const newProject: VideoPipelineProject = {
@@ -55,10 +76,19 @@ export async function POST(
 
     const body = await request.json();
     const action = body.action || 'generate'; // 'generate' | 'save'
-    const visualStyle: VisualStyle = body.visualStyle || businessCase.pipelineProject?.visualStyle || 'cinematic_realistic';
+    const visualStyle: VisualStyle = body.visualStyle || businessCase.pipelineProject?.visualStyle || 'isometric_3d';
 
     if (action === 'generate') {
-      const scenes = await generateDirectorStoryboard(businessCase, businessCase.report, visualStyle);
+      const rawScenes = await generateDirectorStoryboard(businessCase, businessCase.report, visualStyle);
+      
+      // Auto-synthesize voice for all newly generated scenes
+      let scenes = rawScenes;
+      try {
+        scenes = await populateScenesAudio(rawScenes);
+      } catch (e) {
+        console.warn('[POST storyboard:generate] Audio pre-synthesis warning:', e);
+      }
+
       const totalDuration = scenes.reduce((sum, s) => sum + s.durationSeconds, 0);
 
       const updatedProject: VideoPipelineProject = {

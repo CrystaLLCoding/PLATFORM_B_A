@@ -9,6 +9,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@travisvn/edge-tts": "^1.0.2",
     "@types/jszip": "^3.4.0",
     "jszip": "^3.10.1",
     "lucide-react": "^1.16.0",

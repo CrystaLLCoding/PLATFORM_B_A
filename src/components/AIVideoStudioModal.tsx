@@ -91,10 +91,20 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
       setOpenaiKey(savedOAI);
       setElevenlabsKey(savedEL);
       setVoiceProvider(savedProv);
+
+      // Pre-warm SpeechSynthesis voices list
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.getVoices();
+        window.speechSynthesis.onvoiceschanged = () => {
+          window.speechSynthesis.getVoices();
+        };
+      }
     }
 
     if (!project) {
       fetchProject();
+    } else if (project.scenes?.some(s => !s.audioUrl)) {
+      triggerAutoSynthesize(project);
     }
   }, [isOpen, caseId]);
 
@@ -109,6 +119,34 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
     }
   };
 
+  const triggerAutoSynthesize = async (proj: VideoPipelineProject) => {
+    if (isBatchSynthesizing) return;
+    setIsBatchSynthesizing(true);
+    try {
+      const activeKey = voiceProvider === 'elevenlabs' ? elevenlabsKey : (voiceProvider === 'openai' ? openaiKey : undefined);
+      const res = await fetch(`/api/cases/${caseId}/pipeline/synthesize-voice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'synthesize_all',
+          provider: voiceProvider,
+          apiKey: activeKey,
+          speed: playbackSpeed
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.scenes) {
+        const updated = { ...proj, scenes: data.scenes };
+        setProject(updated);
+        if (onProjectUpdated) onProjectUpdated(updated);
+      }
+    } catch (e) {
+      console.warn('[triggerAutoSynthesize] Error:', e);
+    } finally {
+      setIsBatchSynthesizing(false);
+    }
+  };
+
   const fetchProject = async () => {
     setLoading(true);
     try {
@@ -117,6 +155,9 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
       if (data.success && data.project) {
         setProject(data.project);
         if (onProjectUpdated) onProjectUpdated(data.project);
+        if (data.project.scenes?.some((s: StoryboardScene) => !s.audioUrl)) {
+          triggerAutoSynthesize(data.project);
+        }
       }
     } catch (err) {
       console.error('Failed to fetch storyboard project:', err);
@@ -278,11 +319,42 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
 
   const handleBatchSynthesizeAll = async () => {
     if (!project) return;
-    setIsBatchSynthesizing(true);
-    for (const scene of project.scenes) {
-      await handleSynthesizeVoiceForScene(scene);
+    await triggerAutoSynthesize(project);
+  };
+
+  // Diagnostic Sound Test for user
+  const testAudioSound = () => {
+    try {
+      const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtxClass) {
+        const audioCtx = new AudioCtxClass();
+        if (audioCtx.state === 'suspended') audioCtx.resume();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); // C5
+        osc.frequency.exponentialRampToValueAtTime(783.99, audioCtx.currentTime + 0.15); // G5
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.38);
+      }
+
+      if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+        window.speechSynthesis.resume();
+        const testUtt = new SpeechSynthesisUtterance('Звук студии активен');
+        testUtt.lang = 'ru-RU';
+        testUtt.rate = 1.1;
+        setTimeout(() => {
+          window.speechSynthesis.speak(testUtt);
+        }, 150);
+      }
+    } catch (e) {
+      console.warn('Audio test error:', e);
     }
-    setIsBatchSynthesizing(false);
   };
 
   // --- AUDIO & MOTION PLAYER ---
@@ -306,12 +378,24 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
     const scene = project.scenes[sceneIndex];
     setCurrentPlayingSceneIdx(sceneIndex);
 
-    // If neural MP3 audio is available, play it directly!
-    if (scene.audioUrl && !isMuted) {
-      if (audioPlayerRef.current) {
-        audioPlayerRef.current.pause();
-      }
-      const audio = new Audio(scene.audioUrl);
+    // Stop previous audio & speech
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+      audioPlayerRef.current.currentTime = 0;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    if (isMuted) {
+      fallbackTimerAdvance(scene, sceneIndex);
+      return;
+    }
+
+    // 1. If real Neural MP3 audio is available, play it directly!
+    if (scene.audioUrl) {
+      const audio = new Audio();
+      audio.src = scene.audioUrl;
       audio.playbackRate = playbackSpeed;
       audioPlayerRef.current = audio;
 
@@ -323,22 +407,77 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
         }
       };
 
-      audio.onerror = () => {
-        console.warn('Audio playback error, falling back');
-        fallbackTimerAdvance(scene, sceneIndex);
+      audio.onerror = (e) => {
+        console.warn('Audio playback error, falling back to browser speech:', e);
+        speakWithBrowserTts(scene, sceneIndex);
       };
 
       audio.play().then(() => {
         setIsPlaying(true);
       }).catch(err => {
-        console.warn('Autoplay blocked or error:', err);
-        fallbackTimerAdvance(scene, sceneIndex);
+        console.warn('Autoplay blocked or audio error, falling back to speech:', err);
+        speakWithBrowserTts(scene, sceneIndex);
       });
       return;
     }
 
-    // Fallback timer if audio not generated yet
-    fallbackTimerAdvance(scene, sceneIndex);
+    // 2. If Neural Audio is not ready yet:
+    // Speak via browser speech synthesis immediately so there is ZERO SILENCE!
+    speakWithBrowserTts(scene, sceneIndex);
+
+    // And trigger background neural synthesis for this scene right away!
+    handleSynthesizeVoiceForScene(scene);
+  };
+
+  const speakWithBrowserTts = (scene: StoryboardScene, sceneIndex: number) => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window) || isMuted) {
+      fallbackTimerAdvance(scene, sceneIndex);
+      return;
+    }
+
+    try {
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.resume();
+
+      const utterance = new SpeechSynthesisUtterance(scene.scriptText);
+      utterance.rate = playbackSpeed;
+      utterance.lang = 'ru-RU';
+
+      const voices = window.speechSynthesis.getVoices();
+      const ruVoices = voices.filter(v => v.lang && v.lang.toLowerCase().replace('_', '-').startsWith('ru'));
+      if (scene.speaker === 'cohost_strategist' && ruVoices.length > 1) {
+        utterance.voice = ruVoices[1];
+      } else if (ruVoices.length > 0) {
+        utterance.voice = ruVoices[0];
+      }
+
+      utterance.onend = () => {
+        if (sceneIndex + 1 < (project?.scenes.length || 0)) {
+          playScene(sceneIndex + 1);
+        } else {
+          setIsPlaying(false);
+        }
+      };
+
+      utterance.onerror = (e) => {
+        console.warn('Browser speech error, timer fallback:', e);
+        fallbackTimerAdvance(scene, sceneIndex);
+      };
+
+      setIsPlaying(true);
+      setTimeout(() => {
+        try {
+          window.speechSynthesis.resume();
+          window.speechSynthesis.speak(utterance);
+        } catch (e) {
+          console.warn('speechSynthesis.speak failed:', e);
+          fallbackTimerAdvance(scene, sceneIndex);
+        }
+      }, 50);
+    } catch (e) {
+      console.warn('Speech synthesis caught error, advancing timer:', e);
+      fallbackTimerAdvance(scene, sceneIndex);
+    }
   };
 
   const fallbackTimerAdvance = (scene: StoryboardScene, sceneIndex: number) => {
@@ -357,6 +496,15 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
     if (isPlaying) {
       stopPlayback();
     } else {
+      // Unlock AudioContext on direct user click
+      try {
+        const AudioCtxClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (AudioCtxClass) {
+          const ctx = new AudioCtxClass();
+          if (ctx.state === 'suspended') ctx.resume();
+        }
+      } catch {}
+
       playScene(currentPlayingSceneIdx);
     }
   };
@@ -1425,28 +1573,102 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
                   </button>
                 </div>
 
-                {/* Center Dots */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {project?.scenes.map((sc, i) => (
-                    <button
-                      key={sc.id}
-                      onClick={() => playScene(i)}
-                      style={{
-                        width: i === currentPlayingSceneIdx ? '28px' : '10px',
-                        height: '10px',
-                        borderRadius: '5px',
-                        backgroundColor: i === currentPlayingSceneIdx ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.15)',
-                        border: 'none',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s'
-                      }}
-                      title={`Сцена ${i + 1}: ${sc.title}`}
-                    />
-                  ))}
+                {/* Center Dots & Audio Status */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {project?.scenes.map((sc, i) => (
+                      <button
+                        key={sc.id}
+                        onClick={() => playScene(i)}
+                        style={{
+                          width: i === currentPlayingSceneIdx ? '28px' : '10px',
+                          height: '10px',
+                          borderRadius: '5px',
+                          backgroundColor: i === currentPlayingSceneIdx ? 'var(--accent-primary)' : 'rgba(255, 255, 255, 0.15)',
+                          border: 'none',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s'
+                        }}
+                        title={`Сцена ${i + 1}: ${sc.title}`}
+                      />
+                    ))}
+                  </div>
+
+                  {/* Audio Readiness Pill & Action */}
+                  {project && (() => {
+                    const audioCount = project.scenes.filter(s => !!s.audioUrl).length;
+                    const totalCount = project.scenes.length;
+                    const allReady = audioCount === totalCount && totalCount > 0;
+
+                    return (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            padding: '3px 8px',
+                            borderRadius: '6px',
+                            backgroundColor: allReady ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+                            color: allReady ? '#34D399' : '#FBBF24',
+                            border: `1px solid ${allReady ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
+                            fontWeight: '600',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '4px'
+                          }}
+                        >
+                          <Mic size={12} />
+                          {allReady ? `Студийный звук: ${audioCount}/${totalCount}` : `Озвучено: ${audioCount}/${totalCount}`}
+                        </span>
+
+                        {!allReady && (
+                          <button
+                            onClick={handleBatchSynthesizeAll}
+                            disabled={isBatchSynthesizing}
+                            style={{
+                              backgroundColor: 'rgba(99, 102, 241, 0.2)',
+                              border: '1px solid rgba(99, 102, 241, 0.4)',
+                              color: '#A5B4FC',
+                              fontSize: '11px',
+                              fontWeight: '600',
+                              padding: '3px 8px',
+                              borderRadius: '6px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <Sparkles size={12} className={isBatchSynthesizing ? 'animate-spin' : ''} />
+                            {isBatchSynthesizing ? 'Озвучиваем...' : 'Озвучить все'}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </div>
 
-                {/* Sound & Export */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                {/* Sound, Test & Export */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <button
+                    onClick={testAudioSound}
+                    title="Проверить звук динамиков / наушников"
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.06)',
+                      border: '1px solid var(--border-medium)',
+                      color: 'var(--text-secondary)',
+                      borderRadius: '6px',
+                      padding: '6px 10px',
+                      fontSize: '11px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '5px'
+                    }}
+                  >
+                    <Volume1 size={14} />
+                    Тест звука
+                  </button>
+
                   <button
                     onClick={() => setIsMuted(!isMuted)}
                     style={{ background: 'transparent', border: 'none', color: isMuted ? 'var(--accent-rose)' : 'var(--text-secondary)', cursor: 'pointer' }}
