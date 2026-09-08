@@ -1,4 +1,5 @@
 import { BusinessCase, CaseAuditReport, GroundedFact, Bottleneck, ActionRecommendation, MissingDataWarning, VideoChapter } from './types';
+import { buildNotebookLmExportBundle } from './notebookLmBundleBuilder';
 
 /**
  * Аналитический движок строгого аудита (Grounded AI Engine)
@@ -1388,24 +1389,20 @@ function buildFinalReport(
 Ожидаемый финансовый эффект: ${recommendations[0]?.expectedImpact}.
 Обратите внимание: ${missingDataWarnings[0]?.explanation}`;
 
-  const formattedSources = `# Бизнес-аудит: ${title} (${businessType})
-Дата формирования: ${new Date().toLocaleDateString('ru-RU')}
-Количество источников: ${sourcesCount}
-
-## Исходные материалы:
-${sources.map((s, i) => `- [${i + 1}] ${s.name} (${s.type.toUpperCase()}) — ${s.summary || 'Данные обработаны'}`).join('\n')}
-
-## Установленные факты:
-${groundedFacts.map((f, i) => `${i + 1}. ${f.fact} [Источник: ${f.sourceFile}, ${f.sourceLocation}]`).join('\n')}
-
-## Выявленные проблемы (Bottlenecks):
-${bottlenecks.map(b => `- ${b.title}: ${b.description}`).join('\n')}
-
-## Рекомендации к внедрению:
-${recommendations.map(r => `* [${r.priority.toUpperCase()}] ${r.title}\n  Действие: ${r.recommendation}\n  Эффект: ${r.expectedImpact}`).join('\n\n')}
-
-## Предупреждения о недостающих данных:
-${missingDataWarnings.map(w => `! ${w.area}: ${w.explanation}`).join('\n')}`;
+  const formattedSources = buildNotebookLmExportBundle(businessCase, {
+    summary: {
+      businessName: title,
+      businessType,
+      analyzedPeriod: 'Текущий расчетный период',
+      totalSourcesCount: sourcesCount,
+      healthScore: bottlenecks[0]?.severity === 'critical' ? 68 : 78,
+      oneSentenceVerdict
+    },
+    groundedFacts,
+    bottlenecks,
+    actionableRecommendations: recommendations,
+    missingDataWarnings
+  });
 
   return {
     caseId: businessCase.id,

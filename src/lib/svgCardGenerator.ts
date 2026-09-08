@@ -10,6 +10,26 @@ export function generateSvgDataCard(
   sceneIndex: number = 1,
   style: VisualStyle = 'isometric_3d'
 ): string {
+  const defaultTopics: Record<number, string> = {
+    1: 'Вскрытие операционной картины',
+    2: 'Главный источник утечки',
+    3: 'Анатомия клиентского потока и ФОТ',
+    4: 'Вторичные потери и отток клиентов',
+    5: 'Себестоимость и юнит-экономика',
+    6: 'Экстренные меры P0 (1–7 дней)',
+    7: 'Системная трансформация P1 (30 дней)',
+    8: 'Масштабирование P2 и финансовый ROI',
+    9: 'Финальный вердикт аудитора'
+  };
+
+  let cleanHeadline = (title || '').trim();
+  if (!cleanHeadline || /^сцена\s*\d*[:\s\-\.]*$/i.test(cleanHeadline)) {
+    cleanHeadline = defaultTopics[sceneIndex] || `Аналитический срез ${sceneIndex}`;
+  } else {
+    cleanHeadline = cleanHeadline.replace(/^Сцена\s*\d+[:\s\-\.]*/i, '').trim();
+    if (!cleanHeadline) cleanHeadline = defaultTopics[sceneIndex] || `Аналитический срез ${sceneIndex}`;
+  }
+
   const metricLabel = badge?.label || 'Ключевая метрика аудита';
   const metricValue = badge?.value || 'Факты верифицированы';
   const isDown = badge?.trend === 'down';
@@ -146,7 +166,7 @@ export function generateSvgDataCard(
   </g>
 
   <!-- Big Scene Headline -->
-  <text x="190" y="230" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="36" font-weight="900" fill="#FFFFFF" letter-spacing="-0.5">${escapeXml(title)}</text>
+  <text x="190" y="230" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="36" font-weight="900" fill="#FFFFFF" letter-spacing="-0.5">${escapeXml(cleanHeadline)}</text>
 
   <!-- Metric Container -->
   <rect x="190" y="270" width="460" height="230" rx="20" fill="rgba(0, 0, 0, 0.5)" stroke="rgba(255, 255, 255, 0.1)" stroke-width="1.5"/>

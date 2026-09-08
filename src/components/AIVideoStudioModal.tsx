@@ -36,6 +36,7 @@ import {
   VisualStyle,
   SpeakerRole
 } from '@/lib/videoPipelineTypes';
+import { cleanSpeechScript, cleanSceneTitle } from '@/lib/speechUtils';
 
 interface AIVideoStudioModalProps {
   isOpen: boolean;
@@ -527,7 +528,8 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
       window.speechSynthesis.cancel();
       window.speechSynthesis.resume();
 
-      const utterance = new SpeechSynthesisUtterance(scene.scriptText);
+      const textToSpeak = cleanSpeechScript(scene.scriptText);
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
       utterance.rate = playbackSpeed;
       utterance.lang = 'ru-RU';
 
@@ -703,13 +705,21 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
         ctx.lineWidth = 1;
         roundRect(ctx, 40, subBoxY, width - 80, 115, 14, true, true);
 
+        const cleanTitle = (currentScene.title || '')
+          .replace(/^Сцена\s*\d+[:\s\-\.]*/i, '')
+          .trim();
+        const headerText = cleanTitle 
+          ? `СЦЕНА ${currentScene.sceneIndex} • ${cleanTitle.toUpperCase()}`
+          : `СЦЕНА ${currentScene.sceneIndex}`;
+
         ctx.fillStyle = '#94A3B8';
         ctx.font = '12px Inter, sans-serif';
-        ctx.fillText(`СЦЕНА ${currentScene.sceneIndex}: ${currentScene.title.toUpperCase()}`, 65, subBoxY + 32);
+        ctx.fillText(headerText, 65, subBoxY + 32);
 
+        const speechText = cleanSpeechScript(currentScene.scriptText || '');
         ctx.fillStyle = '#F8FAFC';
         ctx.font = '500 18px Inter, sans-serif';
-        wrapText(ctx, currentScene.scriptText, 65, subBoxY + 64, width - 130, 26);
+        wrapText(ctx, speechText, 65, subBoxY + 64, width - 130, 26);
       }
 
       animationFrameRef.current = requestAnimationFrame(renderLoop);

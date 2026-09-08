@@ -119,6 +119,8 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
           isOpen={isExportModalOpen}
           onClose={() => setIsExportModalOpen(false)}
           exportData={report.videoOverview.notebookLmExportPackage}
+          businessCase={businessCase}
+          report={report}
         />
       )}
 
@@ -450,14 +452,7 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
       {/* Интерактивный AI-Консультант по кейсу (Q&A на базе Gemini AI) */}
       <AICaseChatDrawer caseId={caseId} businessCase={businessCase} />
 
-      {/* Экспорт для Google NotebookLM */}
-      {report && (
-        <NotebookLMExportModal
-          isOpen={isExportModalOpen}
-          onClose={() => setIsExportModalOpen(false)}
-          exportData={report.videoOverview.notebookLmExportPackage}
-        />
-      )}
+
 
       {/* AI Video & Podcast Studio Modal */}
       {businessCase && (

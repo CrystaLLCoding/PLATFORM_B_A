@@ -3,6 +3,7 @@ import { storage } from '@/lib/storage';
 import { generateDirectorStoryboard } from '@/lib/videoDirectorEngine';
 import { VideoPipelineProject, VisualStyle, StoryboardScene } from '@/lib/videoPipelineTypes';
 import { populateScenesAudio } from '@/lib/audioSynthesizer';
+import { cleanSpeechScript } from '@/lib/speechUtils';
 import { generateSvgDataCard } from '@/lib/svgCardGenerator';
 
 export async function GET(
@@ -22,21 +23,51 @@ export async function GET(
     if (businessCase.pipelineProject) {
       let needsSave = false;
 
-      // 1. Ensure EVERY scene has an imageUrl (no empty placeholders!)
+      const defaultTopics: Record<number, string> = {
+        1: 'Вскрытие операционной картины',
+        2: 'Главный источник утечки',
+        3: 'Анатомия клиентского потока и ФОТ',
+        4: 'Вторичные потери и отток клиентов',
+        5: 'Себестоимость и юнит-экономика',
+        6: 'Экстренные меры P0 (1–7 дней)',
+        7: 'Системная трансформация P1 (30 дней)',
+        8: 'Масштабирование P2 и финансовый ROI',
+        9: 'Финальный вердикт аудитора'
+      };
+
+      // 1. Ensure EVERY scene has clean title, clean script, and valid imageUrl
       const verifiedScenes = businessCase.pipelineProject.scenes.map((s, idx) => {
-        if (!s.imageUrl) {
+        let title = (s.title || '').trim();
+        if (!title || /^сцена\s*\d*[:\s\-\.]*$/i.test(title)) {
+          title = defaultTopics[idx + 1] || `Аналитический срез ${idx + 1}`;
           needsSave = true;
-          return {
-            ...s,
-            imageUrl: generateSvgDataCard(
-              s.title,
-              s.keyMetricBadge,
-              idx + 1,
-              businessCase.pipelineProject?.visualStyle || defaultStyle
-            )
-          };
+        } else if (/^Сцена\s*\d+[:\s\-\.]*/i.test(title)) {
+          title = title.replace(/^Сцена\s*\d+[:\s\-\.]*/i, '').trim() || defaultTopics[idx + 1];
+          needsSave = true;
         }
-        return s;
+
+        const cleanedScript = cleanSpeechScript(s.scriptText || '');
+        if (cleanedScript !== s.scriptText) {
+          needsSave = true;
+        }
+
+        let imageUrl = s.imageUrl;
+        if (!imageUrl) {
+          needsSave = true;
+          imageUrl = generateSvgDataCard(
+            title,
+            s.keyMetricBadge,
+            idx + 1,
+            businessCase.pipelineProject?.visualStyle || defaultStyle
+          );
+        }
+
+        return {
+          ...s,
+          title,
+          scriptText: cleanedScript,
+          imageUrl
+        };
       });
 
       if (needsSave) {
@@ -153,11 +184,17 @@ export async function POST(
 
     // 2. SAVE SCENE EDITS
     if (action === 'save') {
-      const incomingScenes: StoryboardScene[] = (body.scenes || []).map((s: StoryboardScene, idx: number) => ({
-        ...s,
-        sceneIndex: idx + 1,
-        imageUrl: s.imageUrl || generateSvgDataCard(s.title, s.keyMetricBadge, idx + 1, visualStyle)
-      }));
+      const incomingScenes: StoryboardScene[] = (body.scenes || []).map((s: StoryboardScene, idx: number) => {
+        const cleanTitle = (s.title || '').replace(/^Сцена\s*\d+[:\s\-\.]*/i, '').trim() || s.title || `Сцена ${idx + 1}`;
+        const cleanScript = cleanSpeechScript(s.scriptText || '');
+        return {
+          ...s,
+          sceneIndex: idx + 1,
+          title: cleanTitle,
+          scriptText: cleanScript,
+          imageUrl: s.imageUrl || generateSvgDataCard(cleanTitle, s.keyMetricBadge, idx + 1, visualStyle)
+        };
+      });
 
       const totalDuration = incomingScenes.reduce((sum, s) => sum + (s.durationSeconds || 18), 0);
 

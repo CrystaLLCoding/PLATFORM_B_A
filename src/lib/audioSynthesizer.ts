@@ -10,6 +10,9 @@ export interface AudioSynthesisOptions {
   speed?: number;
 }
 
+import { cleanSpeechScript } from './speechUtils';
+export { cleanSpeechScript };
+
 /**
  * Universal Audio Synthesizer:
  * 1. ElevenLabs (if key provided)
@@ -18,8 +21,8 @@ export interface AudioSynthesisOptions {
  * 4. Fast Google Cloud TTS MP3 fallback (guaranteed in ~300ms, runs anywhere)
  */
 export async function synthesizeSceneAudio(options: AudioSynthesisOptions): Promise<string> {
+  const text = cleanSpeechScript(options.text || '');
   const {
-    text,
     speaker = 'host_analyst',
     provider = 'edge-tts',
     apiKey,
@@ -115,6 +118,7 @@ export async function populateScenesAudio(
 
   await Promise.all(
     updatedScenes.map(async (scene) => {
+      scene.scriptText = cleanSpeechScript(scene.scriptText);
       if (scene.audioUrl) return; // already has audio
       try {
         const audioUri = await synthesizeSceneAudio({

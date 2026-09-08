@@ -1,6 +1,7 @@
 import { CaseAuditReport, BusinessCase } from './types';
 import { StoryboardScene, VideoPipelineProject, VisualStyle } from './videoPipelineTypes';
 import { generateSvgDataCard } from './svgCardGenerator';
+import { cleanSpeechScript, cleanSceneTitle } from './speechUtils';
 
 const GEMINI_MODELS = (process.env.GEMINI_MODEL || 'gemini-2.5-flash,gemini-3-flash-preview,gemini-3.5-flash,gemini-3.1-flash-lite')
   .split(',')
@@ -140,24 +141,50 @@ ${recommendations}
 Выбранный визуальный стиль: ${styleDescriptions[style]}
 
 ТРЕБОВАНИЯ К КАЖДОЙ СЦЕНЕ:
-1. Реплика диктора (scriptText): живая, эмоциональная речь двух профессионалов. Никаких штампов. Называй конкретные цифры, проценты и факты из отчета!
-2. Промпт для кадра (visualPrompt): СТРОГО на АНГЛИЙСКОМ языке.
+1. Реплика диктора (scriptText): живая, эмоциональная и аргументированная речь профессионала.
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО писать имя спикера ('Елена:', 'Алекс:', 'Спикер 1:') в начале текста scriptText! Диктор начинает говорить сразу с сути без своего имени.
+   - Называй конкретные цифры, проценты и факты из отчета!
+2. Заголовок (title): конкретная емкая тема сцены (например: "Главный очаг утечки", "Себестоимость чек-апов"). ЗАПРЕЩЕНО писать "Сцена 2" или "Сцена 2: ...".
+3. Промпт для кадра (visualPrompt): СТРОГО на АНГЛИЙСКОМ языке.
    - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: мусор, тарелки, лица и тела людей крупным планом.
    - ОБЯЗАТЕЛЬНО: 3D isometric financial architecture, glowing glass bar charts, floating holographic numbers, neon cyan and emerald data flows, dark reflective obsidian floor, Unreal Engine 5 render, cinematic volumetric lighting, 8k luxury corporate Bloomberg aesthetic.
-3. cameraAngle: ракурс.
-4. mood: атмосфера сцены.
-5. keyMetricBadge: плашка с конкретной цифрой из аудита (label: короткое название, value: число/процент, trend: "up" | "down" | "neutral").
+4. cameraAngle: ракурс.
+5. mood: атмосфера сцены.
+6. keyMetricBadge: плашка с конкретной цифрой из аудита (label: короткое название, value: число/процент, trend: "up" | "down" | "neutral").
 
 Верни СТРОГО валидный JSON-массив ровно из ${sceneCount} объектов.
 `;
 }
 
 function normalizeScenes(scenes: any[], style: VisualStyle): StoryboardScene[] {
+  const defaultTopics: Record<number, string> = {
+    1: 'Вскрытие операционной картины',
+    2: 'Главный источник утечки',
+    3: 'Анатомия клиентского потока и ФОТ',
+    4: 'Вторичные потери и отток клиентов',
+    5: 'Себестоимость и юнит-экономика',
+    6: 'Экстренные меры P0 (1–7 дней)',
+    7: 'Системная трансформация P1 (30 дней)',
+    8: 'Масштабирование P2 и финансовый ROI',
+    9: 'Финальный вердикт аудитора'
+  };
+
   return scenes.map((s, idx) => {
     const sceneIndex = idx + 1;
     const badge = s.keyMetricBadge || { label: 'Метрика', value: '100%', trend: 'neutral' };
-    const title = s.title || `Сцена ${sceneIndex}`;
     
+    // Clean repetitive "Сцена X:" from title or provide meaningful default
+    let title = (s.title || '').trim();
+    if (!title || /^сцена\s*\d*[:\s\-\.]*$/i.test(title)) {
+      title = defaultTopics[sceneIndex] || `Аналитический срез ${sceneIndex}`;
+    } else {
+      title = title.replace(/^Сцена\s*\d+[:\s\-\.]*/i, '').trim();
+      if (!title) title = defaultTopics[sceneIndex] || `Аналитический срез ${sceneIndex}`;
+    }
+
+    // Clean scriptText to ensure no "Елена:" / "Алекс:" speaker prefix persists
+    const scriptText = cleanSpeechScript(s.scriptText || '');
+
     // Automatically generate clean guaranteed 16:9 SVG Data Card for every scene
     const defaultSvgCard = generateSvgDataCard(title, badge, sceneIndex, style);
 
@@ -168,7 +195,7 @@ function normalizeScenes(scenes: any[], style: VisualStyle): StoryboardScene[] {
       durationSeconds: typeof s.durationSeconds === 'number' ? s.durationSeconds : 18,
       speaker: s.speaker === 'cohost_strategist' ? 'cohost_strategist' : 'host_analyst',
       speakerName: s.speakerName || (s.speaker === 'cohost_strategist' ? 'Елена (Стратег)' : 'Алекс (Аналитик)'),
-      scriptText: s.scriptText || '',
+      scriptText,
       visualPrompt: s.visualPrompt || `Business intelligence scene, corporate analytics, ${style}`,
       cameraAngle: s.cameraAngle || 'Cinematic angle',
       mood: s.mood || 'focused',

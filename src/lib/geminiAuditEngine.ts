@@ -1,5 +1,6 @@
 import { BusinessCase, CaseAuditReport, VideoChapter } from './types';
 import { generateGroundedAudit } from './groundingEngine';
+import { buildNotebookLmExportBundle } from './notebookLmBundleBuilder';
 
 const GEMINI_MODELS = [
   'gemini-3-flash-preview',
@@ -243,25 +244,13 @@ ${sourcesContextText}
           }
         ];
 
-        const formattedSources = `# Бизнес-аудит (Google Gemini AI): ${title} (${businessType})
-Дата формирования: ${new Date().toLocaleDateString('ru-RU')}
-Модель нейросети: Google ${modelName}
-Количество источников: ${sources.length}
-
-## Исходные материалы:
-${sources.map((s, i) => `- [${i + 1}] ${s.name} (${s.type.toUpperCase()}) — ${s.summary || 'Данные обработаны'}`).join('\n')}
-
-## Установленные факты:
-${(parsed.groundedFacts || []).map((f: any, i: number) => `${i + 1}. ${f.fact} [Источник: ${f.sourceFile}, ${f.sourceLocation}]`).join('\n')}
-
-## Выявленные проблемы (Bottlenecks):
-${(parsed.bottlenecks || []).map((b: any) => `- ${b.title}: ${b.description}`).join('\n')}
-
-## Рекомендации к внедрению:
-${(parsed.actionableRecommendations || []).map((r: any) => `* [${r.priority.toUpperCase()}] ${r.title}\n  Действие: ${r.recommendation}\n  Эффект: ${r.expectedImpact}`).join('\n\n')}
-
-## Предупреждения о недостающих данных:
-${(parsed.missingDataWarnings || []).map((w: any) => `! ${w.area}: ${w.explanation}`).join('\n')}`;
+        const formattedSources = buildNotebookLmExportBundle(businessCase, {
+          summary: parsed.summary,
+          groundedFacts: parsed.groundedFacts,
+          bottlenecks: parsed.bottlenecks,
+          actionableRecommendations: parsed.actionableRecommendations,
+          missingDataWarnings: parsed.missingDataWarnings
+        });
 
         console.log(`[GeminiAudit] Аудит успешно сгенерирован с помощью Google Gemini AI (${modelName})!`);
 
