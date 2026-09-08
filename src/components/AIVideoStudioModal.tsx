@@ -26,7 +26,13 @@ import {
   BarChart3,
   Sliders,
   Key,
-  Volume1
+  Volume1,
+  ExternalLink,
+  Clock,
+  Music,
+  Trash2,
+  Copy,
+  Check
 } from 'lucide-react';
 import {
   StoryboardScene,
@@ -78,6 +84,12 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
   const animationFrameRef = useRef<number | null>(null);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const fileInputsRef = useRef<Record<string, HTMLInputElement | null>>({});
+  const masterAudioInputRef = useRef<HTMLInputElement | null>(null);
+  const [notebookLmTimerSeconds, setNotebookLmTimerSeconds] = useState<number | null>(null);
+  const [isTimerRunning, setIsTimerRunning] = useState(false);
+  const [copiedSources, setCopiedSources] = useState(false);
+  const [isPlayingMasterPreview, setIsPlayingMasterPreview] = useState(false);
+  const masterAudioPreviewRef = useRef<HTMLAudioElement | null>(null);
 
   // Load project & saved keys
   useEffect(() => {
@@ -107,6 +119,22 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
       triggerAutoSynthesize(project);
     }
   }, [isOpen, caseId]);
+
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (isTimerRunning && notebookLmTimerSeconds !== null && notebookLmTimerSeconds > 0) {
+      interval = setInterval(() => {
+        setNotebookLmTimerSeconds((prev) => {
+          if (prev === null || prev <= 1) {
+            setIsTimerRunning(false);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [isTimerRunning, notebookLmTimerSeconds]);
 
   const saveSettings = (oai: string, el: string, prov: 'edge-tts' | 'elevenlabs' | 'openai') => {
     setOpenaiKey(oai);
@@ -361,7 +389,10 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
   const stopPlayback = () => {
     if (audioPlayerRef.current) {
       audioPlayerRef.current.pause();
-      audioPlayerRef.current.currentTime = 0;
+    }
+    if (masterAudioPreviewRef.current) {
+      masterAudioPreviewRef.current.pause();
+      setIsPlayingMasterPreview(false);
     }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
@@ -492,6 +523,161 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
     }, duration);
   };
 
+  const playMasterAudioTrack = (startSceneIdx?: number) => {
+    if (!project || !project.masterAudioUrl) return;
+
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+
+    let audio = audioPlayerRef.current;
+    if (!audio || audio.src !== project.masterAudioUrl) {
+      audio = new Audio(project.masterAudioUrl);
+      audioPlayerRef.current = audio;
+    }
+
+    audio.playbackRate = playbackSpeed;
+
+    if (startSceneIdx !== undefined && audio.duration && !isNaN(audio.duration) && project.scenes.length > 0) {
+      const targetTime = (startSceneIdx / project.scenes.length) * audio.duration;
+      audio.currentTime = targetTime;
+      setCurrentPlayingSceneIdx(startSceneIdx);
+    }
+
+    audio.ontimeupdate = () => {
+      if (audio && audio.duration && !isNaN(audio.duration) && project.scenes.length > 0) {
+        const progress = audio.currentTime / audio.duration;
+        const currentIdx = Math.min(
+          Math.floor(progress * project.scenes.length),
+          project.scenes.length - 1
+        );
+        setCurrentPlayingSceneIdx(currentIdx);
+      }
+    };
+
+    audio.onended = () => {
+      setIsPlaying(false);
+      setCurrentPlayingSceneIdx(0);
+      if (audioPlayerRef.current) audioPlayerRef.current.currentTime = 0;
+    };
+
+    audio.onerror = (e) => {
+      console.warn('Master audio playback error:', e);
+      setIsPlaying(false);
+    };
+
+    audio.play().then(() => {
+      setIsPlaying(true);
+    }).catch(err => {
+      console.warn('Master audio autoplay blocked:', err);
+      setIsPlaying(false);
+    });
+  };
+
+  const handleOpenNotebookLmWithTimer = () => {
+    const facts = project?.scenes.map(s => `[${s.speakerName}]: ${s.scriptText}`).join('\n\n') || businessTitle;
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(`Аналитический аудит для подкаста: ${businessTitle}\n\n${facts}`);
+    }
+    setCopiedSources(true);
+    setTimeout(() => setCopiedSources(false), 3000);
+
+    if (typeof window !== 'undefined') {
+      window.open('https://notebooklm.google.com', '_blank');
+    }
+
+    setNotebookLmTimerSeconds(150);
+    setIsTimerRunning(true);
+  };
+
+  const handleUploadMasterAudio = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !project) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64Url = event.target?.result as string;
+      if (base64Url) {
+        const updated = {
+          ...project,
+          masterAudioUrl: base64Url,
+          masterAudioName: file.name
+        };
+        setProject(updated);
+        if (onProjectUpdated) onProjectUpdated(updated);
+
+        try {
+          await fetch(`/api/cases/${caseId}/pipeline/storyboard`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'save',
+              scenes: project.scenes,
+              visualStyle: project.visualStyle,
+              masterAudioUrl: base64Url,
+              masterAudioName: file.name
+            })
+          });
+        } catch (err) {
+          console.error('Failed to save master audio:', err);
+        }
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveMasterAudio = async () => {
+    if (!project) return;
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+    }
+    if (masterAudioPreviewRef.current) {
+      masterAudioPreviewRef.current.pause();
+      setIsPlayingMasterPreview(false);
+    }
+    const updated = {
+      ...project,
+      masterAudioUrl: undefined,
+      masterAudioName: undefined
+    };
+    setProject(updated);
+    if (onProjectUpdated) onProjectUpdated(updated);
+
+    try {
+      await fetch(`/api/cases/${caseId}/pipeline/storyboard`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'save',
+          scenes: project.scenes,
+          visualStyle: project.visualStyle,
+          masterAudioUrl: '',
+          masterAudioName: ''
+        })
+      });
+    } catch (err) {
+      console.error('Failed to remove master audio:', err);
+    }
+  };
+
+  const toggleMasterAudioPreview = () => {
+    if (!project?.masterAudioUrl) return;
+    if (isPlayingMasterPreview && masterAudioPreviewRef.current) {
+      masterAudioPreviewRef.current.pause();
+      setIsPlayingMasterPreview(false);
+    } else {
+      if (!masterAudioPreviewRef.current || masterAudioPreviewRef.current.src !== project.masterAudioUrl) {
+        masterAudioPreviewRef.current = new Audio(project.masterAudioUrl);
+        masterAudioPreviewRef.current.onended = () => setIsPlayingMasterPreview(false);
+      }
+      masterAudioPreviewRef.current.play().then(() => {
+        setIsPlayingMasterPreview(true);
+      }).catch(err => {
+        console.warn('Preview play blocked:', err);
+      });
+    }
+  };
+
   const handleTogglePlay = () => {
     if (isPlaying) {
       stopPlayback();
@@ -505,7 +691,11 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
         }
       } catch {}
 
-      playScene(currentPlayingSceneIdx);
+      if (project?.masterAudioUrl) {
+        playMasterAudioTrack(currentPlayingSceneIdx);
+      } else {
+        playScene(currentPlayingSceneIdx);
+      }
     }
   };
 
@@ -580,15 +770,26 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
 
       // 3. Top Badges (Speaker & Audio Status)
       if (currentScene) {
-        const isHost = currentScene.speaker === 'host_analyst';
-        ctx.fillStyle = isHost ? 'rgba(6, 182, 212, 0.25)' : 'rgba(139, 92, 246, 0.25)';
-        ctx.strokeStyle = isHost ? '#06B6D4' : '#8B5CF6';
-        ctx.lineWidth = 1.5;
-        roundRect(ctx, 40, 40, 260, 46, 12, true, true);
+        if (project.masterAudioUrl) {
+          ctx.fillStyle = 'rgba(6, 182, 212, 0.25)';
+          ctx.strokeStyle = '#06B6D4';
+          ctx.lineWidth = 1.5;
+          roundRect(ctx, 40, 40, 310, 46, 12, true, true);
 
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 15px Inter, sans-serif';
-        ctx.fillText(currentScene.speakerName, 65, 69);
+          ctx.fillStyle = '#22D3EE';
+          ctx.font = 'bold 14px Inter, sans-serif';
+          ctx.fillText('🎙️ NotebookLM Audio Master', 65, 69);
+        } else {
+          const isHost = currentScene.speaker === 'host_analyst';
+          ctx.fillStyle = isHost ? 'rgba(6, 182, 212, 0.25)' : 'rgba(139, 92, 246, 0.25)';
+          ctx.strokeStyle = isHost ? '#06B6D4' : '#8B5CF6';
+          ctx.lineWidth = 1.5;
+          roundRect(ctx, 40, 40, 260, 46, 12, true, true);
+
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = 'bold 15px Inter, sans-serif';
+          ctx.fillText(currentScene.speakerName, 65, 69);
+        }
 
         // Key Metric Badge (Top Right)
         if (currentScene.keyMetricBadge) {
@@ -1376,6 +1577,267 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
                   </button>
                 </div>
 
+                {/* GOOGLE NOTEBOOKLM MASTER TRACK BRIDGE */}
+                <div
+                  style={{
+                    backgroundColor: 'rgba(15, 23, 42, 0.75)',
+                    borderRadius: 'var(--radius-lg)',
+                    border: '1px solid rgba(99, 102, 241, 0.4)',
+                    padding: '24px',
+                    boxShadow: '0 8px 30px rgba(0, 0, 0, 0.4), 0 0 20px rgba(99, 102, 241, 0.15)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '18px'
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div
+                        style={{
+                          width: '42px',
+                          height: '42px',
+                          borderRadius: '10px',
+                          background: 'linear-gradient(135deg, #6366F1 0%, #06B6D4 100%)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          color: '#FFFFFF'
+                        }}
+                      >
+                        <Radio size={22} />
+                      </div>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <h4 style={{ fontSize: '16px', fontWeight: '700', color: '#FFFFFF', margin: 0 }}>
+                            Google NotebookLM Master Audio (Оригинал)
+                          </h4>
+                          <span
+                            style={{
+                              fontSize: '10px',
+                              padding: '2px 8px',
+                              borderRadius: '6px',
+                              backgroundColor: 'rgba(6, 182, 212, 0.2)',
+                              color: '#22D3EE',
+                              fontWeight: '700',
+                              border: '1px solid rgba(6, 182, 212, 0.3)'
+                            }}
+                          >
+                            100% Живой звук Google
+                          </span>
+                        </div>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px', margin: 0 }}>
+                          Google SoundStorm / Gemini Dialog генерирует естественный разговорный подкаст с перебиваниями и смехом.
+                        </p>
+                      </div>
+                    </div>
+
+                    {project?.masterAudioUrl ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button
+                          onClick={toggleMasterAudioPreview}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '7px 14px',
+                            backgroundColor: isPlayingMasterPreview ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+                            border: `1px solid ${isPlayingMasterPreview ? 'rgba(239, 68, 68, 0.4)' : 'rgba(16, 185, 129, 0.4)'}`,
+                            borderRadius: '6px',
+                            color: isPlayingMasterPreview ? '#FCA5A5' : '#6EE7B7',
+                            fontSize: '12px',
+                            fontWeight: '600',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          {isPlayingMasterPreview ? <Pause size={14} /> : <Play size={14} />}
+                          {isPlayingMasterPreview ? 'Остановить тест' : 'Слушать мастер-трек'}
+                        </button>
+                        <button
+                          onClick={handleRemoveMasterAudio}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '7px 10px',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            border: '1px solid rgba(239, 68, 68, 0.25)',
+                            borderRadius: '6px',
+                            color: '#F87171',
+                            fontSize: '12px',
+                            cursor: 'pointer'
+                          }}
+                          title="Удалить мастер-трек"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {project?.masterAudioUrl ? (
+                    <div
+                      style={{
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        border: '1px solid rgba(16, 185, 129, 0.3)',
+                        borderRadius: '8px',
+                        padding: '12px 16px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        flexWrap: 'wrap',
+                        gap: '10px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <CheckCircle2 size={18} color="#10B981" />
+                        <span style={{ fontSize: '13px', color: '#E2E8F0', fontWeight: '500' }}>
+                          Подключен файл: <strong style={{ color: '#6EE7B7' }}>{project.masterAudioName || 'notebooklm_audio.m4a'}</strong>
+                        </span>
+                      </div>
+                      <span style={{ fontSize: '12px', color: '#A7F3D0' }}>
+                        В Кинотеатре (Вкладка 4) слайды автоматически сменяются под этот звук!
+                      </span>
+                    </div>
+                  ) : (
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                        gap: '14px',
+                        backgroundColor: 'rgba(0, 0, 0, 0.25)',
+                        padding: '16px',
+                        borderRadius: '8px',
+                        border: '1px dashed var(--border-subtle)'
+                      }}
+                    >
+                      {/* Step 1 */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span
+                            style={{
+                              width: '22px',
+                              height: '22px',
+                              borderRadius: '50%',
+                              backgroundColor: 'rgba(99, 102, 241, 0.25)',
+                              color: '#818CF8',
+                              fontSize: '11px',
+                              fontWeight: '700',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                          >
+                            1
+                          </span>
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: '#F8FAFC' }}>
+                            Сгенерировать в Google
+                          </span>
+                        </div>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+                          Скопирует все выводы и откроет блокнот NotebookLM. Нажмите «Generate Audio Overview».
+                        </p>
+                        <button
+                          onClick={handleOpenNotebookLmWithTimer}
+                          style={{
+                            marginTop: 'auto',
+                            padding: '9px 14px',
+                            backgroundColor: 'rgba(99, 102, 241, 0.2)',
+                            border: '1px solid rgba(99, 102, 241, 0.4)',
+                            borderRadius: '6px',
+                            color: '#C7D2FE',
+                            fontSize: '12px',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '8px'
+                          }}
+                        >
+                          {copiedSources ? <Check size={14} color="#10B981" /> : <ExternalLink size={14} />}
+                          {copiedSources ? 'Факты скопированы! Открываем...' : 'Скопировать факты и открыть NotebookLM'}
+                        </button>
+
+                        {isTimerRunning && notebookLmTimerSeconds !== null && (
+                          <div
+                            style={{
+                              marginTop: '4px',
+                              fontSize: '11px',
+                              color: '#38BDF8',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}
+                          >
+                            <Clock size={13} className="animate-spin" />
+                            <span>
+                              Обычно генерация занимает ~2-3 мин (осталось ~
+                              {Math.floor(notebookLmTimerSeconds / 60)}:
+                              {(notebookLmTimerSeconds % 60).toString().padStart(2, '0')})
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Step 2 */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span
+                            style={{
+                              width: '22px',
+                              height: '22px',
+                              borderRadius: '50%',
+                              backgroundColor: 'rgba(6, 182, 212, 0.25)',
+                              color: '#22D3EE',
+                              fontSize: '11px',
+                              fontWeight: '700',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center'
+                            }}
+                          >
+                            2
+                          </span>
+                          <span style={{ fontSize: '13px', fontWeight: '600', color: '#F8FAFC' }}>
+                            Загрузить сюда аудиофайл
+                          </span>
+                        </div>
+                        <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0 }}>
+                          Скачайте готовый подкаст из NotebookLM (.m4a или .mp3) и прикрепите как единый Мастер-трек.
+                        </p>
+                        <input
+                          ref={masterAudioInputRef}
+                          type="file"
+                          accept="audio/*,.m4a,.mp3,.wav"
+                          style={{ display: 'none' }}
+                          onChange={handleUploadMasterAudio}
+                        />
+                        <button
+                          onClick={() => masterAudioInputRef.current?.click()}
+                          style={{
+                            marginTop: 'auto',
+                            padding: '9px 14px',
+                            backgroundColor: 'rgba(6, 182, 212, 0.2)',
+                            border: '1px solid rgba(6, 182, 212, 0.4)',
+                            borderRadius: '6px',
+                            color: '#A5F3FC',
+                            fontSize: '12px',
+                            fontWeight: '600',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: '8px'
+                          }}
+                        >
+                          <Upload size={14} />
+                          Загрузить подкаст (.m4a / .mp3)
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 {/* Per-scene voice synthesize cards */}
                 {project?.scenes.map((scene, idx) => {
                   const isSynth = synthesizingVoiceMap[scene.id];
@@ -1554,7 +2016,11 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
 
                   <button
                     onClick={() => {
-                      if (currentPlayingSceneIdx > 0) playScene(currentPlayingSceneIdx - 1);
+                      const prev = currentPlayingSceneIdx - 1;
+                      if (prev >= 0) {
+                        if (project?.masterAudioUrl) playMasterAudioTrack(prev);
+                        else playScene(prev);
+                      }
                     }}
                     disabled={currentPlayingSceneIdx === 0}
                     style={{ background: 'transparent', border: 'none', color: 'var(--text-primary)', cursor: 'pointer' }}
@@ -1568,8 +2034,10 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
 
                   <button
                     onClick={() => {
-                      if (project && currentPlayingSceneIdx + 1 < project.scenes.length) {
-                        playScene(currentPlayingSceneIdx + 1);
+                      const nxt = currentPlayingSceneIdx + 1;
+                      if (project && nxt < project.scenes.length) {
+                        if (project?.masterAudioUrl) playMasterAudioTrack(nxt);
+                        else playScene(nxt);
                       }
                     }}
                     disabled={!project || currentPlayingSceneIdx + 1 >= project.scenes.length}
@@ -1585,7 +2053,10 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
                     {project?.scenes.map((sc, i) => (
                       <button
                         key={sc.id}
-                        onClick={() => playScene(i)}
+                        onClick={() => {
+                          if (project?.masterAudioUrl) playMasterAudioTrack(i);
+                          else playScene(i);
+                        }}
                         style={{
                           width: i === currentPlayingSceneIdx ? '28px' : '10px',
                           height: '10px',
@@ -1602,6 +2073,30 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
 
                   {/* Audio Readiness Pill & Action */}
                   {project && (() => {
+                    if (project.masterAudioUrl) {
+                      return (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span
+                            style={{
+                              fontSize: '11px',
+                              padding: '4px 10px',
+                              borderRadius: '6px',
+                              backgroundColor: 'rgba(6, 182, 212, 0.18)',
+                              color: '#22D3EE',
+                              border: '1px solid rgba(6, 182, 212, 0.4)',
+                              fontWeight: '700',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}
+                          >
+                            <Radio size={12} className={isPlaying ? 'animate-pulse' : ''} />
+                            Master Track: {project.masterAudioName || 'Google NotebookLM'}
+                          </span>
+                        </div>
+                      );
+                    }
+
                     const audioCount = project.scenes.filter(s => !!s.audioUrl).length;
                     const totalCount = project.scenes.length;
                     const allReady = audioCount === totalCount && totalCount > 0;

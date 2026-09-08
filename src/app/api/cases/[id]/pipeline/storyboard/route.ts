@@ -124,6 +124,8 @@ export async function POST(
         status: body.status || businessCase.pipelineProject?.status || 'storyboard_ready',
         scenes: incomingScenes,
         totalDurationSeconds: totalDuration,
+        masterAudioUrl: body.masterAudioUrl !== undefined ? body.masterAudioUrl : businessCase.pipelineProject?.masterAudioUrl,
+        masterAudioName: body.masterAudioName !== undefined ? body.masterAudioName : businessCase.pipelineProject?.masterAudioName,
         createdAt: businessCase.pipelineProject?.createdAt || new Date().toISOString(),
         updatedAt: new Date().toISOString()
       };

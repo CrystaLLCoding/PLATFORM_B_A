@@ -37,6 +37,8 @@ export interface VideoPipelineProject {
   status: 'draft' | 'storyboard_ready' | 'generating_media' | 'completed';
   scenes: StoryboardScene[];
   totalDurationSeconds: number;
+  masterAudioUrl?: string; // Original audio from Google NotebookLM / master track
+  masterAudioName?: string;
   createdAt: string;
   updatedAt: string;
 }
