@@ -107,8 +107,11 @@ ${recommendations}
 
 ТРЕБОВАНИЯ К КАЖДОЙ СЦЕНЕ:
 1. Реплика диктора (scriptText): живая речь двух профессионалов. Никаких штампов ("добрый день", "сегодня мы поговорим"). Сразу к сути, цифрам и интриге.
-2. Промпт для кадра (visualPrompt): СТРОГО на АНГЛИЙСКОМ языке. Детальное описание для нейросети генерации изображений (DALL-E 3 / Flux / Midjourney): ракурс камеры, композиция, свет, детали окружения, элементы данных, БЕЗ текста и надписей на самом рисунке.
-3. cameraAngle: ракурс (например: "Cinematic wide angle", "Macro focus on balance ledger", "Isometric 3D aerial view").
+2. Промпт для кадра (visualPrompt): СТРОГО на АНГЛИЙСКОМ языке.
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: бытовой мусор, мусорные баки, объедки, чашки, тарелки, а также лица и тела людей крупным планом (нейросеть портит анатомию).
+   - ОБЯЗАТЕЛЬНО: Высокотехнологичная 3D бизнес-инфографика и архитектурные визуализации:
+     - 3D isometric financial architecture, glowing glass bar charts, floating holographic numbers, neon cyan and emerald data flows, dark reflective obsidian floor, Unreal Engine 5 render, cinematic volumetric lighting, 8k luxury corporate Bloomberg aesthetic.
+3. cameraAngle: ракурс (например: "Cinematic 3D isometric perspective", "Macro depth on glowing glass financial chart", "Wide architectural twilight analytics studio").
 4. mood: атмосфера сцены ("tense inquiry", "clear breakthrough", "high-stakes strategy").
 5. keyMetricBadge: плашка с цифрой для видео (label: короткое название, value: конкретное число/процент, trend: "up" | "down" | "neutral").
 
@@ -187,8 +190,8 @@ function generateFallbackStoryboard(
       speaker: 'host_analyst',
       speakerName: 'Алекс (Аналитик)',
       scriptText: `Когда мы начали разбирать первичные выписки и отчетность по проекту ${title}, первое, что бросилось в глаза — это резкий контраст между оборотом и тем, что реально остается на счету в конце месяца.`,
-      visualPrompt: `Moody atmospheric office at dawn, stacks of financial balance sheets on polished mahogany desk, soft morning sunlight through tall glass windows, coffee steam, cinematic shallow depth of field, 8k photographic`,
-      cameraAngle: 'Slow cinematic tracking shot',
+      visualPrompt: `Futuristic dark luxury financial trading room, 3D isometric glowing glass bar charts floating over dark obsidian table, volumetric cyan and gold lighting, depth of field, Unreal Engine 5 render, 8k cinematic`,
+      cameraAngle: 'Cinematic 3D isometric slow pan',
       mood: 'sharp investigation',
       keyMetricBadge: { label: 'Оборот vs Остаток', value: 'Разрыв 3.2x', trend: 'down' }
     },
@@ -200,8 +203,8 @@ function generateFallbackStoryboard(
       speaker: 'cohost_strategist',
       speakerName: 'Елена (Стратег)',
       scriptText: `Абсолютно точно, Алекс. Причем аудит подтверждает: ключевой провал скрыт в ${primaryBottleneck}. Деньги буквально утекают через мелкие неучтенные операции, которые в совокупности съедают львиную долю маржи.`,
-      visualPrompt: `High-tech illuminated data visualization showing revenue leakage stream, red warning nodes in glowing digital network, dark moody control room background, hyper-detailed render`,
-      cameraAngle: 'Isometric perspective with depth',
+      visualPrompt: `3D isometric diagnostic breakdown of revenue stream, glowing red and amber warning nodes in dark cyberspace network, holographic financial waterfall chart, clean high tech Bloomberg aesthetics, 8k`,
+      cameraAngle: 'Isometric perspective with deep shadow',
       mood: 'uncompromising diagnostic',
       keyMetricBadge: { label: 'Критический очаг', value: 'Узкое горлышко', trend: 'down' }
     },
@@ -213,8 +216,8 @@ function generateFallbackStoryboard(
       speaker: 'host_analyst',
       speakerName: 'Алекс (Аналитик)',
       scriptText: `То есть бизнес работает вхолостую на пиковых нагрузках? Получается, команда перегружена заказами, но средний чек и структура списаний не дают компании выйти на целевую прибыль?`,
-      visualPrompt: `Bustling modern retail or service venue interior, time-lapse blurred patrons, sharp focus on modern glowing point of sale terminal, ambient golden bokeh lights`,
-      cameraAngle: 'Medium cinematic interior shot',
+      visualPrompt: `Futuristic 3D clock face surrounded by glowing peak load heatmaps, emerald and amber time-segmented analytics bars, reflective dark mirror studio, crisp modern typography, octane render 8k`,
+      cameraAngle: 'Macro 45-degree angle on 3D data grid',
       mood: 'urgent tension',
       keyMetricBadge: { label: 'Пиковая нагрузка', value: '88%', trend: 'neutral' }
     },
@@ -226,8 +229,8 @@ function generateFallbackStoryboard(
       speaker: 'cohost_strategist',
       speakerName: 'Елена (Стратег)',
       scriptText: `Именно поэтому первоочередной шаг — это ${primaryRec}. Если внедрить эти шаги в первые 14 дней, математическая модель показывает расчетный эффект: ${impact}. Это остановит отток капитала немедленно.`,
-      visualPrompt: `Sleek architectural blueprint overlaid with dynamic glowing green financial growth chart, minimalist white marble office, professional daylight, high luxury aesthetic`,
-      cameraAngle: 'Overhead macro shot slowly panning',
+      visualPrompt: `3D isometric ascending staircase of glowing emerald blocks representing growth and margin recovery, sparkling light trails, frosted glass architecture, clean Swiss luxury finance design, 8k`,
+      cameraAngle: 'Rising isometric angle',
       mood: 'confident breakthrough',
       keyMetricBadge: { label: 'Ожидаемый рост', value: impact, trend: 'up' }
     },
@@ -239,8 +242,8 @@ function generateFallbackStoryboard(
       speaker: 'host_analyst',
       speakerName: 'Алекс (Аналитик)',
       scriptText: `Итак, диагноз поставлен, контрольные точки зафиксированы в отчете. Теперь мяч на стороне собственника: внедрить рекомендации P1 и закрыть зоны неконтролируемых списаний.`,
-      visualPrompt: `Confident modern executive looking at futuristic holographic tablet screen displaying clear green verified audit checks, panoramic city skyline at sunset`,
-      cameraAngle: 'Cinematic wide heroic perspective',
+      visualPrompt: `Sleek futuristic glass cube with glowing green verified audit shield inside, surrounded by floating holographic KPI gauges, deep indigo and cyan atmospheric lighting, cinematic 8k masterpiece`,
+      cameraAngle: 'Epic hero center shot',
       mood: 'empowering resolution',
       keyMetricBadge: { label: 'Индекс готовности', value: '92 / 100', trend: 'up' }
     }
