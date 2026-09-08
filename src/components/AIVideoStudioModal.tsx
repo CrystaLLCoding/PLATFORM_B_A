@@ -1207,23 +1207,29 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
                         flexDirection: 'column'
                       }}
                     >
-                      {/* Image Preview Box */}
+                      {/* Image Preview Box (16:9 Ratio) */}
                       <div
                         style={{
-                          height: '210px',
+                          width: '100%',
+                          aspectRatio: '16 / 9',
                           backgroundColor: '#070B14',
                           position: 'relative',
                           display: 'flex',
                           alignItems: 'center',
                           justifyContent: 'center',
-                          overflow: 'hidden'
+                          overflow: 'hidden',
+                          borderBottom: '1px solid var(--border-subtle)'
                         }}
                       >
                         {scene.imageUrl ? (
                           <img
                             src={scene.imageUrl}
                             alt={scene.title}
-                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                            style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                            onError={(e) => {
+                              // If image fails, auto-trigger clean infographic generation
+                              handleGenerateImageForScene(scene, 'infographic');
+                            }}
                           />
                         ) : (
                           <div style={{ textAlign: 'center', padding: '20px' }}>
