@@ -105,6 +105,8 @@ export interface CaseAuditReport {
   videoOverview: VideoOverviewData;
 }
 
+import { VideoPipelineProject } from './videoPipelineTypes';
+
 export interface BusinessCase {
   id: string;
   title: string;
@@ -115,4 +117,5 @@ export interface BusinessCase {
   status: 'draft' | 'analyzing' | 'completed' | 'failed';
   sources: UploadedSource[];
   report?: CaseAuditReport;
+  pipelineProject?: VideoPipelineProject;
 }

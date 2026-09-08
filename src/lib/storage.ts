@@ -118,6 +118,16 @@ class StorageManager {
     this.saveToDisk();
     return c;
   }
+
+  public updateCasePipelineProject(caseId: string, project: import('./videoPipelineTypes').VideoPipelineProject): BusinessCase | null {
+    const c = this.cases.get(caseId);
+    if (!c) return null;
+
+    c.pipelineProject = project;
+    c.updatedAt = new Date().toISOString();
+    this.saveToDisk();
+    return c;
+  }
 }
 
 export const storage = new StorageManager();

@@ -13,7 +13,8 @@ import {
   Video,
   Share2,
   Volume2,
-  AlertCircle
+  AlertCircle,
+  Film
 } from 'lucide-react';
 import { VideoOverviewData, VideoChapter } from '@/lib/types';
 import { ExecutiveAudioBriefPlayer } from './ExecutiveAudioBriefPlayer';
@@ -23,13 +24,15 @@ interface VideoOverviewPlayerProps {
   businessTitle: string;
   onUploadVideo?: (file: File) => void;
   onOpenNotebookLMExport?: () => void;
+  onOpenStudio?: () => void;
 }
 
 export const VideoOverviewPlayer: React.FC<VideoOverviewPlayerProps> = ({
   videoData,
   businessTitle,
   onUploadVideo,
-  onOpenNotebookLMExport
+  onOpenNotebookLMExport,
+  onOpenStudio
 }) => {
   const [isUploading, setIsUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -103,6 +106,28 @@ export const VideoOverviewPlayer: React.FC<VideoOverviewPlayerProps> = ({
             <Upload size={15} />
             <span>{hasRealVideo ? 'Заменить MP4 видео' : 'Загрузить MP4 из NotebookLM'}</span>
           </button>
+
+          {onOpenStudio && (
+            <button
+              type="button"
+              onClick={onOpenStudio}
+              className="button-primary"
+              style={{
+                padding: '8px 18px',
+                fontSize: '0.85rem',
+                background: 'linear-gradient(135deg, #6366F1, #EC4899)',
+                boxShadow: '0 0 20px rgba(99, 102, 241, 0.4)',
+                border: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                fontWeight: '700'
+              }}
+            >
+              <Film size={15} />
+              <span>AI Video Studio</span>
+            </button>
+          )}
 
           {onOpenNotebookLMExport && (
             <button

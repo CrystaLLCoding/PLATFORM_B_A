@@ -18,13 +18,15 @@ import {
   Sparkles,
   Download,
   AlertTriangle,
-  Upload
+  Upload,
+  Film
 } from 'lucide-react';
 import { BusinessCase } from '@/lib/types';
 import { VideoOverviewPlayer } from '@/components/VideoOverviewPlayer';
 import { ReportView } from '@/components/ReportView';
 import { NotebookLMExportModal } from '@/components/NotebookLMExportModal';
 import { AICaseChatDrawer } from '@/components/AICaseChatDrawer';
+import { AIVideoStudioModal } from '@/components/AIVideoStudioModal';
 
 export default function CaseDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const resolvedParams = use(params);
@@ -34,6 +36,7 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'report' | 'video' | 'sources'>('report');
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isStudioModalOpen, setIsStudioModalOpen] = useState(false);
   const [isReanalyzing, setIsReanalyzing] = useState(false);
 
   useEffect(() => {
@@ -139,6 +142,25 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
         </Link>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <button
+            onClick={() => setIsStudioModalOpen(true)}
+            className="button-primary"
+            style={{
+              padding: '8px 18px',
+              fontSize: '0.85rem',
+              background: 'linear-gradient(135deg, #6366F1, #EC4899)',
+              boxShadow: '0 0 20px rgba(99, 102, 241, 0.4)',
+              border: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontWeight: '700'
+            }}
+          >
+            <Film size={15} />
+            <span>AI Video Studio</span>
+          </button>
+
           <button
             onClick={() => setIsExportModalOpen(true)}
             className="btn-secondary"
@@ -289,6 +311,7 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
             businessTitle={businessCase.title}
             onUploadVideo={handleCustomVideoUpload}
             onOpenNotebookLMExport={() => setIsExportModalOpen(true)}
+            onOpenStudio={() => setIsStudioModalOpen(true)}
           />
 
           {/* Transcript accordion box */}
@@ -426,6 +449,29 @@ export default function CaseDetailPage({ params }: { params: Promise<{ id: strin
 
       {/* Интерактивный AI-Консультант по кейсу (Q&A на базе Gemini AI) */}
       <AICaseChatDrawer caseId={caseId} businessCase={businessCase} />
+
+      {/* Экспорт для Google NotebookLM */}
+      {report && (
+        <NotebookLMExportModal
+          isOpen={isExportModalOpen}
+          onClose={() => setIsExportModalOpen(false)}
+          exportData={report.videoOverview.notebookLmExportPackage}
+        />
+      )}
+
+      {/* AI Video & Podcast Studio Modal */}
+      {businessCase && (
+        <AIVideoStudioModal
+          isOpen={isStudioModalOpen}
+          onClose={() => setIsStudioModalOpen(false)}
+          caseId={caseId}
+          businessTitle={businessCase.title}
+          initialProject={businessCase.pipelineProject}
+          onProjectUpdated={(proj) => {
+            setBusinessCase(prev => prev ? { ...prev, pipelineProject: proj } : null);
+          }}
+        />
+      )}
     </div>
   );
 }
