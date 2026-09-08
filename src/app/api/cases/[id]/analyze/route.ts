@@ -8,6 +8,7 @@ export async function POST(
 ) {
   try {
     const { id } = await context.params;
+    await storage.ensureFresh();
     const businessCase = storage.getCaseById(id);
 
     if (!businessCase) {
@@ -22,6 +23,9 @@ export async function POST(
 
     // Save report and mark as completed
     const updatedCase = storage.updateCaseReport(id, auditReport);
+
+    // Persist to cloud
+    await storage.saveToCloud();
 
     return NextResponse.json({ success: true, case: updatedCase, report: auditReport });
   } catch (err: any) {

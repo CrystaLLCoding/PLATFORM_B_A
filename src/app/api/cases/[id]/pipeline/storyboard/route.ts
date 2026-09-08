@@ -10,6 +10,7 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
+    await storage.ensureFresh();
     const businessCase = storage.getCaseById(id);
     if (!businessCase) {
       return NextResponse.json({ success: false, error: 'Кейс не найден' }, { status: 404 });
@@ -23,6 +24,7 @@ export async function GET(
           const enrichedScenes = await populateScenesAudio(businessCase.pipelineProject.scenes);
           businessCase.pipelineProject.scenes = enrichedScenes;
           storage.updateCasePipelineProject(id, businessCase.pipelineProject);
+          await storage.saveToCloud();
         } catch (e) {
           console.warn('[GET storyboard] Audio auto-population warning:', e);
         }
@@ -56,6 +58,8 @@ export async function GET(
     };
 
     storage.updateCasePipelineProject(id, newProject);
+    await storage.saveToCloud();
+
     return NextResponse.json({ success: true, project: newProject });
   } catch (err: any) {
     console.error('[API/pipeline/storyboard GET] Error:', err);
@@ -69,6 +73,7 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
+    await storage.ensureFresh();
     const businessCase = storage.getCaseById(id);
     if (!businessCase) {
       return NextResponse.json({ success: false, error: 'Кейс не найден' }, { status: 404 });
@@ -103,6 +108,8 @@ export async function POST(
       };
 
       storage.updateCasePipelineProject(id, updatedProject);
+      await storage.saveToCloud();
+
       return NextResponse.json({ success: true, project: updatedProject });
     }
 
@@ -122,6 +129,8 @@ export async function POST(
       };
 
       storage.updateCasePipelineProject(id, savedProject);
+      await storage.saveToCloud();
+
       return NextResponse.json({ success: true, project: savedProject });
     }
 

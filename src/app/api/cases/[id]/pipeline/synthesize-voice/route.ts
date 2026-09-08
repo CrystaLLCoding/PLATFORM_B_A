@@ -9,6 +9,7 @@ export async function POST(
 ) {
   try {
     const { id } = await params;
+    await storage.ensureFresh();
     const businessCase = storage.getCaseById(id);
     if (!businessCase) {
       return NextResponse.json({ success: false, error: 'Кейс не найден' }, { status: 404 });
@@ -33,6 +34,7 @@ export async function POST(
         scenes: updatedScenes,
         updatedAt: new Date().toISOString()
       });
+      await storage.saveToCloud();
 
       return NextResponse.json({
         success: true,
@@ -83,6 +85,7 @@ export async function POST(
         scenes: updatedScenes,
         updatedAt: new Date().toISOString()
       });
+      await storage.saveToCloud();
     }
 
     return NextResponse.json({

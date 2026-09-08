@@ -27,6 +27,50 @@ export default function NewCasePage() {
   const [analysisStage, setAnalysisStage] = useState<string>('');
   const [analysisProgress, setAnalysisProgress] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  // Restore draft on mount
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const saved = localStorage.getItem('draft_new_case_v1');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed.title) setTitle(parsed.title);
+        if (parsed.businessType) setBusinessType(parsed.businessType);
+        if (parsed.description) setDescription(parsed.description);
+        if (Array.isArray(parsed.sources) && parsed.sources.length > 0) {
+          setSources(parsed.sources);
+          setDraftRestored(true);
+        }
+      }
+    } catch {}
+  }, []);
+
+  // Auto-save draft on changes
+  React.useEffect(() => {
+    if (typeof window === 'undefined' || isSubmitting) return;
+    if (sources.length > 0 || title.trim()) {
+      try {
+        localStorage.setItem('draft_new_case_v1', JSON.stringify({
+          title,
+          businessType,
+          description,
+          sources
+        }));
+      } catch {}
+    }
+  }, [title, businessType, description, sources, isSubmitting]);
+
+  const clearDraft = () => {
+    setTitle('');
+    setDescription('');
+    setSources([]);
+    setDraftRestored(false);
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem('draft_new_case_v1');
+    }
+  };
 
   const handleTitleChange = (val: string) => {
     setTitle(val);
@@ -205,6 +249,9 @@ export default function NewCasePage() {
       setAnalysisProgress(100);
 
       await new Promise(r => setTimeout(r, 400));
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem('draft_new_case_v1');
+      }
       router.push(`/cases/${caseId}`);
     } catch (err: any) {
       setErrorMessage(err.message || 'Произошла непредвиденная ошибка');
@@ -236,6 +283,40 @@ export default function NewCasePage() {
           Укажите название и загрузите файлы в любом удобном виде. Наша система автоматически распознает данные и подготовит фактологическое заключение с видеопересказом.
         </p>
       </div>
+
+      {draftRestored && sources.length > 0 && (
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          background: 'rgba(16, 185, 129, 0.12)',
+          border: '1px solid rgba(16, 185, 129, 0.35)',
+          color: '#6EE7B7',
+          borderRadius: 'var(--radius-md)',
+          padding: '12px 18px',
+          marginBottom: '20px',
+          fontSize: '0.88rem'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <CheckCircle2 size={18} color="#10B981" />
+            <span>Черновик восстановлен: <strong>{sources.length} файлов</strong> сохранены и готовы к запуску аудита!</span>
+          </div>
+          <button
+            onClick={clearDraft}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--text-muted)',
+              fontSize: '0.8rem',
+              cursor: 'pointer',
+              textDecoration: 'underline'
+            }}
+          >
+            Очистить черновик
+          </button>
+        </div>
+      )}
 
       {errorMessage && (
         <div style={{

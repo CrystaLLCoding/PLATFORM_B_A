@@ -3,6 +3,7 @@ import { storage } from '@/lib/storage';
 
 export async function GET() {
   try {
+    await storage.ensureFresh();
     const cases = storage.getAllCases();
     return NextResponse.json({ success: true, cases });
   } catch (err: any) {
@@ -12,6 +13,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   try {
+    await storage.ensureFresh();
     const body = await request.json();
     const { title, businessType, description, sources } = body;
 
@@ -28,10 +30,14 @@ export async function POST(request: Request) {
           type: s.type || 'excel',
           sizeBytes: s.sizeBytes,
           summary: s.summary,
+          fromArchive: s.fromArchive,
           parsedDataPreview: s.parsedDataPreview
         });
       });
     }
+
+    // Await cloud persistence before returning response to client
+    await storage.saveToCloud();
 
     const refreshedCase = storage.getCaseById(newCase.id);
     return NextResponse.json({ success: true, case: refreshedCase });

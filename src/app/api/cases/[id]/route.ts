@@ -7,6 +7,7 @@ export async function GET(
 ) {
   try {
     const { id } = await context.params;
+    await storage.ensureFresh();
     const businessCase = storage.getCaseById(id);
 
     if (!businessCase) {
