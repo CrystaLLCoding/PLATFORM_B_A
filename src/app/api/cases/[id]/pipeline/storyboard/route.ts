@@ -3,6 +3,7 @@ import { storage } from '@/lib/storage';
 import { generateDirectorStoryboard } from '@/lib/videoDirectorEngine';
 import { VideoPipelineProject, VisualStyle, StoryboardScene } from '@/lib/videoPipelineTypes';
 import { populateScenesAudio } from '@/lib/audioSynthesizer';
+import { generateSvgDataCard } from '@/lib/svgCardGenerator';
 
 export async function GET(
   request: Request,
@@ -16,27 +17,59 @@ export async function GET(
       return NextResponse.json({ success: false, error: 'Кейс не найден' }, { status: 404 });
     }
 
+    const defaultStyle: VisualStyle = 'isometric_3d';
+
     if (businessCase.pipelineProject) {
-      // If any scenes are missing audio, populate them automatically so the player always has sound
+      let needsSave = false;
+
+      // 1. Ensure EVERY scene has an imageUrl (no empty placeholders!)
+      const verifiedScenes = businessCase.pipelineProject.scenes.map((s, idx) => {
+        if (!s.imageUrl) {
+          needsSave = true;
+          return {
+            ...s,
+            imageUrl: generateSvgDataCard(
+              s.title,
+              s.keyMetricBadge,
+              idx + 1,
+              businessCase.pipelineProject?.visualStyle || defaultStyle
+            )
+          };
+        }
+        return s;
+      });
+
+      if (needsSave) {
+        businessCase.pipelineProject.scenes = verifiedScenes;
+      }
+
+      // 2. Ensure audio is populated
       const missingAudio = businessCase.pipelineProject.scenes.some(s => !s.audioUrl);
       if (missingAudio) {
         try {
           const enrichedScenes = await populateScenesAudio(businessCase.pipelineProject.scenes);
           businessCase.pipelineProject.scenes = enrichedScenes;
-          storage.updateCasePipelineProject(id, businessCase.pipelineProject);
-          await storage.saveToCloud();
+          needsSave = true;
         } catch (e) {
           console.warn('[GET storyboard] Audio auto-population warning:', e);
         }
       }
+
+      if (needsSave) {
+        storage.updateCasePipelineProject(id, businessCase.pipelineProject);
+        await storage.saveToCloud();
+      }
+
       return NextResponse.json({ success: true, project: businessCase.pipelineProject });
     }
 
-    // Auto-generate initial storyboard if not existing
-    const defaultStyle: VisualStyle = 'isometric_3d';
-    const rawScenes = await generateDirectorStoryboard(businessCase, businessCase.report, defaultStyle);
-    
-    // Automatically synthesize initial audio for zero-latency instant playback
+    // Auto-generate initial deep storyboard (8 scenes default)
+    const rawScenes = await generateDirectorStoryboard(businessCase, businessCase.report, {
+      preferredStyle: defaultStyle,
+      sceneCount: 8
+    });
+
+    // Automatically synthesize initial audio
     let scenes = rawScenes;
     try {
       scenes = await populateScenesAudio(rawScenes);
@@ -80,13 +113,18 @@ export async function POST(
     }
 
     const body = await request.json();
-    const action = body.action || 'generate'; // 'generate' | 'save'
+    const action = body.action || 'generate'; // 'generate' | 'save' | 'add_scene' | 'delete_scene'
     const visualStyle: VisualStyle = body.visualStyle || businessCase.pipelineProject?.visualStyle || 'isometric_3d';
+    const sceneCount: number = body.sceneCount && body.sceneCount >= 5 ? body.sceneCount : 8;
 
+    // 1. REGENERATE DEEP STORYBOARD
     if (action === 'generate') {
-      const rawScenes = await generateDirectorStoryboard(businessCase, businessCase.report, visualStyle);
-      
-      // Auto-synthesize voice for all newly generated scenes
+      const rawScenes = await generateDirectorStoryboard(businessCase, businessCase.report, {
+        preferredStyle: visualStyle,
+        sceneCount
+      });
+
+      // Auto-synthesize voice
       let scenes = rawScenes;
       try {
         scenes = await populateScenesAudio(rawScenes);
@@ -113,9 +151,15 @@ export async function POST(
       return NextResponse.json({ success: true, project: updatedProject });
     }
 
+    // 2. SAVE SCENE EDITS
     if (action === 'save') {
-      const incomingScenes: StoryboardScene[] = body.scenes || [];
-      const totalDuration = incomingScenes.reduce((sum, s) => sum + (s.durationSeconds || 15), 0);
+      const incomingScenes: StoryboardScene[] = (body.scenes || []).map((s: StoryboardScene, idx: number) => ({
+        ...s,
+        sceneIndex: idx + 1,
+        imageUrl: s.imageUrl || generateSvgDataCard(s.title, s.keyMetricBadge, idx + 1, visualStyle)
+      }));
+
+      const totalDuration = incomingScenes.reduce((sum, s) => sum + (s.durationSeconds || 18), 0);
 
       const savedProject: VideoPipelineProject = {
         caseId: id,
@@ -132,6 +176,77 @@ export async function POST(
       await storage.saveToCloud();
 
       return NextResponse.json({ success: true, project: savedProject });
+    }
+
+    // 3. ADD A NEW CUSTOM SCENE
+    if (action === 'add_scene') {
+      const existing = businessCase.pipelineProject?.scenes || [];
+      const newIdx = existing.length + 1;
+      const speaker = newIdx % 2 === 1 ? 'host_analyst' : 'cohost_strategist';
+      const speakerName = speaker === 'host_analyst' ? 'Алекс (Аналитик)' : 'Елена (Стратег)';
+      const title = body.title || `Сцена ${newIdx}: Дополнительный анализ`;
+      const badge = { label: 'Новый фокус', value: '100%', trend: 'up' as const };
+
+      const newScene: StoryboardScene = {
+        id: `scene-${Date.now()}`,
+        sceneIndex: newIdx,
+        title,
+        durationSeconds: 18,
+        speaker,
+        speakerName,
+        scriptText: body.scriptText || 'Дополнительный аналитический комментарий к аудиту.',
+        visualPrompt: `Business analytics 3D isometric slide, ${visualStyle}`,
+        cameraAngle: 'Cinematic wide angle',
+        mood: 'focused',
+        keyMetricBadge: badge,
+        imageUrl: generateSvgDataCard(title, badge, newIdx, visualStyle)
+      };
+
+      const updatedScenes = [...existing, newScene];
+      const totalDuration = updatedScenes.reduce((sum, s) => sum + s.durationSeconds, 0);
+
+      const updatedProject: VideoPipelineProject = {
+        caseId: id,
+        businessTitle: businessCase.title,
+        visualStyle,
+        status: 'storyboard_ready',
+        scenes: updatedScenes,
+        totalDurationSeconds: totalDuration,
+        createdAt: businessCase.pipelineProject?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      storage.updateCasePipelineProject(id, updatedProject);
+      await storage.saveToCloud();
+
+      return NextResponse.json({ success: true, project: updatedProject });
+    }
+
+    // 4. DELETE A SCENE
+    if (action === 'delete_scene') {
+      const { sceneId } = body;
+      const existing = businessCase.pipelineProject?.scenes || [];
+      const filtered = existing
+        .filter(s => s.id !== sceneId)
+        .map((s, idx) => ({ ...s, sceneIndex: idx + 1 }));
+
+      const totalDuration = filtered.reduce((sum, s) => sum + s.durationSeconds, 0);
+
+      const updatedProject: VideoPipelineProject = {
+        caseId: id,
+        businessTitle: businessCase.title,
+        visualStyle,
+        status: 'storyboard_ready',
+        scenes: filtered,
+        totalDurationSeconds: totalDuration,
+        createdAt: businessCase.pipelineProject?.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+
+      storage.updateCasePipelineProject(id, updatedProject);
+      await storage.saveToCloud();
+
+      return NextResponse.json({ success: true, project: updatedProject });
     }
 
     return NextResponse.json({ success: false, error: 'Неизвестное действие' }, { status: 400 });

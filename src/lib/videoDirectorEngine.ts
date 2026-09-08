@@ -1,41 +1,54 @@
 import { CaseAuditReport, BusinessCase } from './types';
 import { StoryboardScene, VideoPipelineProject, VisualStyle } from './videoPipelineTypes';
+import { generateSvgDataCard } from './svgCardGenerator';
 
 const GEMINI_MODELS = (process.env.GEMINI_MODEL || 'gemini-2.5-flash,gemini-3-flash-preview,gemini-3.5-flash,gemini-3.1-flash-lite')
   .split(',')
   .map(m => m.trim())
   .filter(Boolean);
 
+export interface StoryboardGenerationOptions {
+  preferredStyle?: VisualStyle;
+  sceneCount?: number; // e.g., 6, 8, 10, 12
+}
+
 export async function generateDirectorStoryboard(
   businessCase: BusinessCase,
   auditReport?: CaseAuditReport,
-  preferredStyle: VisualStyle = 'cinematic_realistic'
+  styleOrOptions?: VisualStyle | StoryboardGenerationOptions
 ): Promise<StoryboardScene[]> {
+  const options: StoryboardGenerationOptions = typeof styleOrOptions === 'string'
+    ? { preferredStyle: styleOrOptions, sceneCount: 8 }
+    : { preferredStyle: 'isometric_3d', sceneCount: 8, ...(styleOrOptions || {}) };
+
+  const preferredStyle = options.preferredStyle || 'isometric_3d';
+  const targetSceneCount = options.sceneCount && options.sceneCount >= 5 ? options.sceneCount : 8;
+
   const apiKey = process.env.GEMINI_API_KEY;
 
   // If no API key is set, generate an intelligent grounded fallback based on case data
   if (!apiKey || apiKey === 'your_gemini_api_key_here') {
-    console.warn('[VideoDirector] GEMINI_API_KEY not configured. Generating fallback storyboard.');
-    return generateFallbackStoryboard(businessCase, auditReport, preferredStyle);
+    console.warn('[VideoDirector] GEMINI_API_KEY not configured. Generating deep fallback storyboard.');
+    return generateFallbackStoryboard(businessCase, auditReport, preferredStyle, targetSceneCount);
   }
 
-  const prompt = buildDirectorPrompt(businessCase, auditReport, preferredStyle);
+  const prompt = buildDirectorPrompt(businessCase, auditReport, preferredStyle, targetSceneCount);
 
   let lastError: Error | null = null;
   for (const modelName of GEMINI_MODELS) {
     try {
-      console.log(`[VideoDirector] Generating storyboard using Gemini (${modelName})...`);
+      console.log(`[VideoDirector] Generating deep storyboard (${targetSceneCount} scenes) using Gemini (${modelName})...`);
       const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
 
       const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        signal: AbortSignal.timeout(45000),
+        signal: AbortSignal.timeout(50000),
         body: JSON.stringify({
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: {
-            temperature: 0.4,
-            maxOutputTokens: 6000,
+            temperature: 0.35,
+            maxOutputTokens: 8000,
             responseMimeType: 'application/json'
           }
         })
@@ -55,7 +68,7 @@ export async function generateDirectorStoryboard(
       }
 
       const parsed: StoryboardScene[] = JSON.parse(rawText);
-      if (Array.isArray(parsed) && parsed.length > 0) {
+      if (Array.isArray(parsed) && parsed.length >= 4) {
         return normalizeScenes(parsed, preferredStyle);
       }
     } catch (err: any) {
@@ -64,16 +77,25 @@ export async function generateDirectorStoryboard(
     }
   }
 
-  console.warn('[VideoDirector] All Gemini models failed or timed out. Using fallback storyboard.', lastError?.message);
-  return generateFallbackStoryboard(businessCase, auditReport, preferredStyle);
+  console.warn('[VideoDirector] All Gemini models failed or timed out. Using deep fallback storyboard.', lastError?.message);
+  return generateFallbackStoryboard(businessCase, auditReport, preferredStyle, targetSceneCount);
 }
 
-function buildDirectorPrompt(businessCase: BusinessCase, auditReport?: CaseAuditReport, style: VisualStyle = 'cinematic_realistic'): string {
+function buildDirectorPrompt(
+  businessCase: BusinessCase,
+  auditReport?: CaseAuditReport,
+  style: VisualStyle = 'isometric_3d',
+  sceneCount: number = 8
+): string {
   const title = businessCase.title;
   const desc = businessCase.description || '';
-  const facts = auditReport?.groundedFacts?.slice(0, 8).map(f => `- ${f.fact} (${f.sourceLocation}): ${f.quoteOrData}`).join('\n') || 'Факты извлечены из загруженных источников';
-  const bottlenecks = auditReport?.bottlenecks?.slice(0, 4).map(b => `- [${b.severity}] ${b.title}: ${b.description}`).join('\n') || 'Анализ узких мест';
-  const recommendations = auditReport?.actionableRecommendations?.slice(0, 4).map(r => `- [${r.priority}] ${r.title}: ${r.recommendation} (Эффект: ${r.expectedImpact})`).join('\n') || 'План действий';
+  const facts = auditReport?.groundedFacts?.slice(0, 12).map(f => `- ${f.fact} (${f.sourceLocation}): ${f.quoteOrData}`).join('\n') || 'Факты извлечены из загруженных источников';
+  const bottlenecks = auditReport?.bottlenecks?.map(b => `- [${b.severity}] ${b.title}: ${b.description}`).join('\n') || 'Анализ узких мест';
+  const recommendations = auditReport?.actionableRecommendations?.map(r => `- [${r.priority}] ${r.title}: ${r.recommendation} (Эффект: ${r.expectedImpact})`).join('\n') || 'План действий';
+  const revenueFact = auditReport?.groundedFacts?.find(f => f.fact.toLowerCase().includes('выручк') || f.fact.toLowerCase().includes('оборот'));
+  const revenue = revenueFact ? revenueFact.quoteOrData : 'по данным первичных выписок';
+  const marginFact = auditReport?.groundedFacts?.find(f => f.fact.toLowerCase().includes('марж') || f.fact.toLowerCase().includes('рентабельн'));
+  const margin = marginFact ? marginFact.quoteOrData : '28%';
 
   const styleDescriptions: Record<VisualStyle, string> = {
     cinematic_realistic: 'Hyperrealistic cinematic photography, anamorphic lens, shallow depth of field, natural dramatic lighting, 8k resolution, documentary film style',
@@ -85,11 +107,23 @@ function buildDirectorPrompt(businessCase: BusinessCase, auditReport?: CaseAudit
   return `
 Ты — главный режиссер и шоураннер глубоких бизнес-расследований в стиле Google NotebookLM Audio Overview и Bloomberg Originals.
 
-Задача: Создать захватывающую раскадровку (Storyboard) для 5–7 сцен видео/аудио подкаста по аудиту бизнеса "${title}".
+Задача: Создать глубокую, содержательную и захватывающую раскадровку (Storyboard) ровно из ${sceneCount} сцен для полноценного бизнес-расследования по аудиту бизнеса "${title}".
 
 Два ведущих диалога:
 1. "Алекс (Аналитик)" (speaker: "host_analyst"): Внимательный, въедливый, подмечает неожиданные парадоксы, скрытые убытки и нестыковки в первичных данных.
 2. "Елена (Стратег)" (speaker: "cohost_strategist"): Опытный практик, опирается на строгие цифры отчета, остужает эмоции и раскладывает по полочкам системное решение.
+
+СТРУКТУРА РАССЛЕДОВАНИЯ (распредели по ${sceneCount} сценам):
+- Сцена 1: Финансовая картина и разрыв (Оборот vs Чистый остаток на счету, выручка: ${revenue}).
+- Сцена 2: Структура маржинальности и юнит-экономика (Маржа ${margin}, средний чек, себестоимость).
+- Сцена 3: Фонд оплаты труда и операционная загрузка (Перегрузка персонала в пики, простой в непики).
+- Сцена 4: Главное узкое горлышко (Критический Bottleneck #1 из отчета).
+- Сцена 5: Клиентский поток, удержание и конверсия (CAC, отток, повторные визиты).
+- Сцена 6: Скрытые потери и неконтролируемые списания (Неучтенные мелкие расходы).
+- Сцена 7: План неотложных мер первого эшелона P0 (1–7 дней).
+- Сцена 8: Системная трансформация P1 (30 дней: автоматизация, регламенты, мотивация).
+- Сцена 9 (если сцен >= 9): Масштабирование и новый уровень P2 (90 дней).
+- Финальная сцена: Итоговый финансовый вердикт и окупаемость (ROI, индекс готовности).
 
 Входные данные аудита бизнеса:
 Описание: ${desc}
@@ -106,87 +140,66 @@ ${recommendations}
 Выбранный визуальный стиль: ${styleDescriptions[style]}
 
 ТРЕБОВАНИЯ К КАЖДОЙ СЦЕНЕ:
-1. Реплика диктора (scriptText): живая речь двух профессионалов. Никаких штампов ("добрый день", "сегодня мы поговорим"). Сразу к сути, цифрам и интриге.
+1. Реплика диктора (scriptText): живая, эмоциональная речь двух профессионалов. Никаких штампов. Называй конкретные цифры, проценты и факты из отчета!
 2. Промпт для кадра (visualPrompt): СТРОГО на АНГЛИЙСКОМ языке.
-   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: бытовой мусор, мусорные баки, объедки, чашки, тарелки, а также лица и тела людей крупным планом (нейросеть портит анатомию).
-   - ОБЯЗАТЕЛЬНО: Высокотехнологичная 3D бизнес-инфографика и архитектурные визуализации:
-     - 3D isometric financial architecture, glowing glass bar charts, floating holographic numbers, neon cyan and emerald data flows, dark reflective obsidian floor, Unreal Engine 5 render, cinematic volumetric lighting, 8k luxury corporate Bloomberg aesthetic.
-3. cameraAngle: ракурс (например: "Cinematic 3D isometric perspective", "Macro depth on glowing glass financial chart", "Wide architectural twilight analytics studio").
-4. mood: атмосфера сцены ("tense inquiry", "clear breakthrough", "high-stakes strategy").
-5. keyMetricBadge: плашка с цифрой для видео (label: короткое название, value: конкретное число/процент, trend: "up" | "down" | "neutral").
+   - КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО: мусор, тарелки, лица и тела людей крупным планом.
+   - ОБЯЗАТЕЛЬНО: 3D isometric financial architecture, glowing glass bar charts, floating holographic numbers, neon cyan and emerald data flows, dark reflective obsidian floor, Unreal Engine 5 render, cinematic volumetric lighting, 8k luxury corporate Bloomberg aesthetic.
+3. cameraAngle: ракурс.
+4. mood: атмосфера сцены.
+5. keyMetricBadge: плашка с конкретной цифрой из аудита (label: короткое название, value: число/процент, trend: "up" | "down" | "neutral").
 
-Верни СТРОГО валидный JSON-массив из 5–7 объектов:
-[
-  {
-    "id": "scene-1",
-    "sceneIndex": 1,
-    "title": "Интрига в цифрах",
-    "durationSeconds": 18,
-    "speaker": "host_analyst",
-    "speakerName": "Алекс (Аналитик)",
-    "scriptText": "Текст реплики Алекса...",
-    "visualPrompt": "Detailed English visual prompt adhering to the chosen style...",
-    "cameraAngle": "Wide cinematic tracking shot",
-    "mood": "tense inquiry",
-    "keyMetricBadge": {
-      "label": "Скрытые потери",
-      "value": "24%",
-      "trend": "down"
-    }
-  },
-  {
-    "id": "scene-2",
-    "sceneIndex": 2,
-    "title": "Ответ стратега",
-    "durationSeconds": 20,
-    "speaker": "cohost_strategist",
-    "speakerName": "Елена (Стратег)",
-    "scriptText": "Текст реплики Елены с фактами...",
-    "visualPrompt": "Detailed English visual prompt...",
-    "cameraAngle": "Over-the-shoulder depth shot",
-    "mood": "strategic clarity",
-    "keyMetricBadge": {
-      "label": "Точка безубыточности",
-      "value": "18.5 млн",
-      "trend": "up"
-    }
-  }
-]
+Верни СТРОГО валидный JSON-массив ровно из ${sceneCount} объектов.
 `;
 }
 
 function normalizeScenes(scenes: any[], style: VisualStyle): StoryboardScene[] {
-  return scenes.map((s, idx) => ({
-    id: s.id || `scene-${idx + 1}`,
-    sceneIndex: idx + 1,
-    title: s.title || `Сцена ${idx + 1}`,
-    durationSeconds: typeof s.durationSeconds === 'number' ? s.durationSeconds : 18,
-    speaker: s.speaker === 'cohost_strategist' ? 'cohost_strategist' : 'host_analyst',
-    speakerName: s.speakerName || (s.speaker === 'cohost_strategist' ? 'Елена (Стратег)' : 'Алекс (Аналитик)'),
-    scriptText: s.scriptText || '',
-    visualPrompt: s.visualPrompt || `Business intelligence scene, corporate analytics, ${style}`,
-    cameraAngle: s.cameraAngle || 'Cinematic angle',
-    mood: s.mood || 'focused',
-    keyMetricBadge: s.keyMetricBadge || { label: 'Метрика', value: '100%', trend: 'neutral' }
-  }));
+  return scenes.map((s, idx) => {
+    const sceneIndex = idx + 1;
+    const badge = s.keyMetricBadge || { label: 'Метрика', value: '100%', trend: 'neutral' };
+    const title = s.title || `Сцена ${sceneIndex}`;
+    
+    // Automatically generate clean guaranteed 16:9 SVG Data Card for every scene
+    const defaultSvgCard = generateSvgDataCard(title, badge, sceneIndex, style);
+
+    return {
+      id: s.id || `scene-${sceneIndex}`,
+      sceneIndex,
+      title,
+      durationSeconds: typeof s.durationSeconds === 'number' ? s.durationSeconds : 18,
+      speaker: s.speaker === 'cohost_strategist' ? 'cohost_strategist' : 'host_analyst',
+      speakerName: s.speakerName || (s.speaker === 'cohost_strategist' ? 'Елена (Стратег)' : 'Алекс (Аналитик)'),
+      scriptText: s.scriptText || '',
+      visualPrompt: s.visualPrompt || `Business intelligence scene, corporate analytics, ${style}`,
+      cameraAngle: s.cameraAngle || 'Cinematic angle',
+      mood: s.mood || 'focused',
+      keyMetricBadge: badge,
+      imageUrl: s.imageUrl || defaultSvgCard
+    };
+  });
 }
 
 function generateFallbackStoryboard(
   businessCase: BusinessCase,
   auditReport?: CaseAuditReport,
-  style: VisualStyle = 'cinematic_realistic'
+  style: VisualStyle = 'isometric_3d',
+  sceneCount: number = 8
 ): StoryboardScene[] {
   const title = businessCase.title;
-  const primaryBottleneck = auditReport?.bottlenecks?.[0]?.title || 'неэффективность операционных процессов';
-  const primaryRec = auditReport?.actionableRecommendations?.[0]?.title || 'автоматизация учета и контроль списаний';
-  const impact = auditReport?.actionableRecommendations?.[0]?.expectedImpact || '+18% к маржинальности';
+  const primaryBottleneck = auditReport?.bottlenecks?.[0]?.title || 'Критический простой дорогостоящих мощностей';
+  const secondaryBottleneck = auditReport?.bottlenecks?.[1]?.title || 'Неэффективная загрузка персонала в непиковые часы';
+  const primaryRec = auditReport?.actionableRecommendations?.[0]?.title || 'Внедрение динамического расписания и пакетных чеков';
+  const secondaryRec = auditReport?.actionableRecommendations?.[1]?.title || 'Автоматизация списания расходников и пересмотр мотивации';
+  const thirdRec = auditReport?.actionableRecommendations?.[2]?.title || 'Запуск программы возврата базы и кросс-продаж';
+  const impact = auditReport?.actionableRecommendations?.[0]?.expectedImpact || '+24% к чистой марже';
+  const marginFact = auditReport?.groundedFacts?.find(f => f.fact.toLowerCase().includes('марж') || f.fact.toLowerCase().includes('рентабельн'));
+  const margin = marginFact ? marginFact.quoteOrData : '28%';
 
-  return [
+  const fullScenes: Array<Omit<StoryboardScene, 'imageUrl'> & { imageUrl?: string }> = [
     {
       id: 'scene-1',
       sceneIndex: 1,
       title: 'Вскрытие операционной картины',
-      durationSeconds: 16,
+      durationSeconds: 18,
       speaker: 'host_analyst',
       speakerName: 'Алекс (Аналитик)',
       scriptText: `Когда мы начали разбирать первичные выписки и отчетность по проекту ${title}, первое, что бросилось в глаза — это резкий контраст между оборотом и тем, что реально остается на счету в конце месяца.`,
@@ -211,41 +224,96 @@ function generateFallbackStoryboard(
     {
       id: 'scene-3',
       sceneIndex: 3,
-      title: 'Анатомия клиентского потока',
-      durationSeconds: 18,
+      title: 'Анатомия клиентского потока и ФОТ',
+      durationSeconds: 19,
       speaker: 'host_analyst',
       speakerName: 'Алекс (Аналитик)',
-      scriptText: `То есть бизнес работает вхолостую на пиковых нагрузках? Получается, команда перегружена заказами, но средний чек и структура списаний не дают компании выйти на целевую прибыль?`,
+      scriptText: `И данные показывают колоссальную асимметрию нагрузки: в часы пик мощности загружены на 88%, а в середине дня персонал простаивает, продолжая жечь фиксированный ФОТ и аренду без генерации выручки.`,
       visualPrompt: `Futuristic 3D clock face surrounded by glowing peak load heatmaps, emerald and amber time-segmented analytics bars, reflective dark mirror studio, crisp modern typography, octane render 8k`,
       cameraAngle: 'Macro 45-degree angle on 3D data grid',
       mood: 'urgent tension',
-      keyMetricBadge: { label: 'Пиковая нагрузка', value: '88%', trend: 'neutral' }
+      keyMetricBadge: { label: 'Пиковая нагрузка', value: '88% в пике', trend: 'neutral' }
     },
     {
       id: 'scene-4',
       sceneIndex: 4,
-      title: 'Стратегический план первого эшелона (P1)',
-      durationSeconds: 22,
+      title: 'Вторичные потери и отток клиентов',
+      durationSeconds: 21,
       speaker: 'cohost_strategist',
       speakerName: 'Елена (Стратег)',
-      scriptText: `Именно поэтому первоочередной шаг — это ${primaryRec}. Если внедрить эти шаги в первые 14 дней, математическая модель показывает расчетный эффект: ${impact}. Это остановит отток капитала немедленно.`,
-      visualPrompt: `3D isometric ascending staircase of glowing emerald blocks representing growth and margin recovery, sparkling light trails, frosted glass architecture, clean Swiss luxury finance design, 8k`,
-      cameraAngle: 'Rising isometric angle',
-      mood: 'confident breakthrough',
-      keyMetricBadge: { label: 'Ожидаемый рост', value: impact, trend: 'up' }
+      scriptText: `И это тянет за собой системную проблему: ${secondaryBottleneck}. Клиенты совершают первый визит, но повторная обращаемость критически низка. Мы переплачиваем за каждый входящий лид, не накапливая LTV.`,
+      visualPrompt: `3D dark glass funnel with leaking red data streams, cybernetic customer journey analytics map, glowing nodes, Unreal Engine 5 luxury financial visualization 8k`,
+      cameraAngle: 'Overhead diagonal isometric shot',
+      mood: 'revealing diagnosis',
+      keyMetricBadge: { label: 'Потери на оттоке', value: '-22% выручки', trend: 'down' }
     },
     {
       id: 'scene-5',
       sceneIndex: 5,
+      title: 'Себестоимость и юнит-экономика',
+      durationSeconds: 20,
+      speaker: 'host_analyst',
+      speakerName: 'Алекс (Аналитик)',
+      scriptText: `А если свести фактическую себестоимость с учетом всех расходников и косвенных затрат, расчетная маржинальность падает до ${margin}. Получается, флагманские направления фактически субсидируют неэффективные хвосты.`,
+      visualPrompt: `3D holographic unit economics breakdown matrix, floating glowing percentage tags, emerald and crimson profit margins, dark obsidian pedestal, octane render 8k`,
+      cameraAngle: 'Close-up tracking along 3D chart line',
+      mood: 'analytical reality check',
+      keyMetricBadge: { label: 'Фактическая маржа', value: margin, trend: 'down' }
+    },
+    {
+      id: 'scene-6',
+      sceneIndex: 6,
+      title: 'План экстренных мер P0 (1–7 дней)',
+      durationSeconds: 22,
+      speaker: 'cohost_strategist',
+      speakerName: 'Елена (Стратег)',
+      scriptText: `Поэтому первый эшелон действий — жесткий P0: ${primaryRec}. Немедленно остановить утечки на нецелевых списаниях и ввести лимиты на закупки. Это стабилизирует кэшфлоу уже в первую неделю.`,
+      visualPrompt: `3D isometric ascending staircase of glowing emerald blocks representing growth and margin recovery, sparkling light trails, frosted glass architecture, clean Swiss luxury finance design, 8k`,
+      cameraAngle: 'Rising isometric angle',
+      mood: 'decisive intervention',
+      keyMetricBadge: { label: 'Быстрый эффект P0', value: '+14% к кэшу', trend: 'up' }
+    },
+    {
+      id: 'scene-7',
+      sceneIndex: 7,
+      title: 'Системная трансформация P1 (30 дней)',
+      durationSeconds: 22,
+      speaker: 'host_analyst',
+      speakerName: 'Алекс (Аналитик)',
+      scriptText: `На 30-дневном этапе P1 подключаем: ${secondaryRec}. Перенастройка графиков и автоматизация кассового контура дают совокупный расчетный эффект: ${impact}. Бизнес выходит из зоны кассового риска.`,
+      visualPrompt: `3D futuristic control dashboard with glowing gear modules and green KPI dials, sleek architectural minimalist glass, cinematic atmospheric cyan lighting, 8k render`,
+      cameraAngle: 'Smooth sliding camera track',
+      mood: 'confident breakthrough',
+      keyMetricBadge: { label: 'Ожидаемый рост P1', value: impact, trend: 'up' }
+    },
+    {
+      id: 'scene-8',
+      sceneIndex: 8,
+      title: 'Масштабирование P2 и финансовый ROI',
+      durationSeconds: 20,
+      speaker: 'cohost_strategist',
+      speakerName: 'Елена (Стратег)',
+      scriptText: `А стратегический финал P2 — это ${thirdRec}. Формирование высокочековых комплексных пакетов закрепляет чистую рентабельность на целевом уровне, обеспечивая стабильную отдачу на вложенный капитал.`,
+      visualPrompt: `Epic 3D isometric architectural tower of growth, interconnected glowing financial bridges, clean corporate blue and emerald lasers, raytraced glass textures, 8k resolution`,
+      cameraAngle: 'High angle panoramic isometric sweep',
+      mood: 'strategic horizon',
+      keyMetricBadge: { label: 'Целевой ROI', value: '+35% чистой прибыли', trend: 'up' }
+    },
+    {
+      id: 'scene-9',
+      sceneIndex: 9,
       title: 'Финальный вердикт аудитора',
       durationSeconds: 18,
       speaker: 'host_analyst',
       speakerName: 'Алекс (Аналитик)',
-      scriptText: `Итак, диагноз поставлен, контрольные точки зафиксированы в отчете. Теперь мяч на стороне собственника: внедрить рекомендации P1 и закрыть зоны неконтролируемых списаний.`,
+      scriptText: `Итак, диагноз поставлен, контрольные точки зафиксированы в отчете. Все шаги оцифрованы, риски изолированы — система готова к исполнению по утвержденной дорожной карте.`,
       visualPrompt: `Sleek futuristic glass cube with glowing green verified audit shield inside, surrounded by floating holographic KPI gauges, deep indigo and cyan atmospheric lighting, cinematic 8k masterpiece`,
       cameraAngle: 'Epic hero center shot',
       mood: 'empowering resolution',
-      keyMetricBadge: { label: 'Индекс готовности', value: '92 / 100', trend: 'up' }
+      keyMetricBadge: { label: 'Индекс готовности', value: '94 / 100', trend: 'up' }
     }
   ];
+
+  const sliced = fullScenes.slice(0, Math.max(5, Math.min(sceneCount, fullScenes.length)));
+  return normalizeScenes(sliced, style);
 }

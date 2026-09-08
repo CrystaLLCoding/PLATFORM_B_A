@@ -26,7 +26,9 @@ import {
   BarChart3,
   Sliders,
   Key,
-  Volume1
+  Volume1,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import {
   StoryboardScene,
@@ -59,6 +61,8 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
   const [generatingImagesMap, setGeneratingImagesMap] = useState<Record<string, boolean>>({});
   const [synthesizingVoiceMap, setSynthesizingVoiceMap] = useState<Record<string, boolean>>({});
   const [isBatchSynthesizing, setIsBatchSynthesizing] = useState(false);
+  const [targetSceneCount, setTargetSceneCount] = useState<number>(8);
+  const [isGeneratingAllImages, setIsGeneratingAllImages] = useState(false);
 
   // Settings & Custom API Keys
   const [showSettings, setShowSettings] = useState(false);
@@ -103,8 +107,13 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
 
     if (!project) {
       fetchProject();
-    } else if (project.scenes?.some(s => !s.audioUrl)) {
-      triggerAutoSynthesize(project);
+    } else {
+      if (project.scenes?.some(s => !s.audioUrl)) {
+        triggerAutoSynthesize(project);
+      }
+      if (project.scenes?.some(s => !s.imageUrl)) {
+        handleGenerateAllImages('infographic');
+      }
     }
   }, [isOpen, caseId]);
 
@@ -158,6 +167,9 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
         if (data.project.scenes?.some((s: StoryboardScene) => !s.audioUrl)) {
           triggerAutoSynthesize(data.project);
         }
+        if (data.project.scenes?.some((s: StoryboardScene) => !s.imageUrl)) {
+          handleGenerateAllImages('infographic');
+        }
       }
     } catch (err) {
       console.error('Failed to fetch storyboard project:', err);
@@ -166,15 +178,17 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
     }
   };
 
-  const handleRegenerateStoryboard = async (style?: VisualStyle) => {
+  const handleRegenerateStoryboard = async (style?: VisualStyle, count?: number) => {
     setIsGeneratingScenes(true);
+    const countToUse = count || targetSceneCount || 8;
     try {
       const res = await fetch(`/api/cases/${caseId}/pipeline/storyboard`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           action: 'generate',
-          visualStyle: style || project?.visualStyle || 'isometric_3d'
+          visualStyle: style || project?.visualStyle || 'isometric_3d',
+          sceneCount: countToUse
         })
       });
       const data = await res.json();
@@ -184,6 +198,54 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
       }
     } catch (err) {
       console.error('Failed to regenerate storyboard:', err);
+    } finally {
+      setIsGeneratingScenes(false);
+    }
+  };
+
+  const handleAddScene = async () => {
+    if (!project) return;
+    setIsGeneratingScenes(true);
+    try {
+      const res = await fetch(`/api/cases/${caseId}/pipeline/storyboard`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'add_scene',
+          visualStyle: project.visualStyle
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.project) {
+        setProject(data.project);
+        if (onProjectUpdated) onProjectUpdated(data.project);
+      }
+    } catch (e) {
+      console.warn('Failed to add scene:', e);
+    } finally {
+      setIsGeneratingScenes(false);
+    }
+  };
+
+  const handleDeleteScene = async (sceneId: string) => {
+    if (!project || project.scenes.length <= 2) return;
+    setIsGeneratingScenes(true);
+    try {
+      const res = await fetch(`/api/cases/${caseId}/pipeline/storyboard`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'delete_scene',
+          sceneId
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.project) {
+        setProject(data.project);
+        if (onProjectUpdated) onProjectUpdated(data.project);
+      }
+    } catch (e) {
+      console.warn('Failed to delete scene:', e);
     } finally {
       setIsGeneratingScenes(false);
     }
@@ -218,7 +280,7 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
   };
 
   // --- IMAGE GENERATION / UPLOADING ---
-  const handleGenerateImageForScene = async (scene: StoryboardScene, mode: 'ai' | 'infographic' = 'ai') => {
+  const handleGenerateImageForScene = async (scene: StoryboardScene, mode: 'ai' | 'infographic' = 'infographic') => {
     setGeneratingImagesMap(prev => ({ ...prev, [scene.id]: true }));
     try {
       const res = await fetch(`/api/cases/${caseId}/pipeline/generate-image`, {
@@ -233,11 +295,15 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
         })
       });
       const data = await res.json();
-      if (data.success && data.imageUrl && project) {
-        const updatedScenes = project.scenes.map(s =>
-          s.id === scene.id ? { ...s, imageUrl: data.imageUrl } : s
-        );
-        handleSaveSceneChanges(updatedScenes);
+      if (data.success && data.imageUrl) {
+        setProject(prev => {
+          if (!prev) return prev;
+          const updatedScenes = prev.scenes.map(s =>
+            s.id === scene.id ? { ...s, imageUrl: data.imageUrl } : s
+          );
+          if (onProjectUpdated) onProjectUpdated({ ...prev, scenes: updatedScenes });
+          return { ...prev, scenes: updatedScenes };
+        });
       }
     } catch (err) {
       console.error('Failed to generate image:', err);
@@ -266,10 +332,14 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
           });
           const data = await res.json();
           if (data.success && data.imageUrl) {
-            const updatedScenes = project.scenes.map(s =>
-              s.id === sceneId ? { ...s, imageUrl: data.imageUrl } : s
-            );
-            handleSaveSceneChanges(updatedScenes);
+            setProject(prev => {
+              if (!prev) return prev;
+              const updatedScenes = prev.scenes.map(s =>
+                s.id === sceneId ? { ...s, imageUrl: data.imageUrl } : s
+              );
+              if (onProjectUpdated) onProjectUpdated({ ...prev, scenes: updatedScenes });
+              return { ...prev, scenes: updatedScenes };
+            });
           }
         } finally {
           setGeneratingImagesMap(prev => ({ ...prev, [sceneId]: false }));
@@ -279,10 +349,28 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
     reader.readAsDataURL(file);
   };
 
-  const handleGenerateAllImages = async (mode: 'ai' | 'infographic' = 'ai') => {
+  const handleGenerateAllImages = async (mode: 'ai' | 'infographic' = 'infographic') => {
     if (!project) return;
-    for (const scene of project.scenes) {
-      await handleGenerateImageForScene(scene, mode);
+    setIsGeneratingAllImages(true);
+    try {
+      const res = await fetch(`/api/cases/${caseId}/pipeline/generate-image`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'generate_all',
+          visualStyle: project?.visualStyle || 'isometric_3d'
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.scenes) {
+        const updated = { ...project, scenes: data.scenes };
+        setProject(updated);
+        if (onProjectUpdated) onProjectUpdated(updated);
+      }
+    } catch (err) {
+      console.error('Failed to generate all images:', err);
+    } finally {
+      setIsGeneratingAllImages(false);
     }
   };
 
@@ -986,42 +1074,80 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
                   gap: '12px'
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                  <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Стиль съемки:</span>
-                  <select
-                    value={project?.visualStyle || 'isometric_3d'}
-                    onChange={(e) => {
-                      const newStyle = e.target.value as VisualStyle;
-                      if (project) {
-                        setProject({ ...project, visualStyle: newStyle });
-                        handleRegenerateStoryboard(newStyle);
-                      }
-                    }}
-                    style={{
-                      backgroundColor: 'var(--bg-input)',
-                      color: 'var(--text-primary)',
-                      border: '1px solid var(--border-medium)',
-                      borderRadius: '8px',
-                      padding: '6px 12px',
-                      fontSize: '13px'
-                    }}
-                  >
-                    <option value="isometric_3d">3D Изометрия &amp; Данные (Bloomberg / Pixar Tech)</option>
-                    <option value="cinematic_realistic">Кинематографичный 8K (Архитектура &amp; Аналитика)</option>
-                    <option value="dark_tech_hud">Cyberpunk Dark Tech / HUD</option>
-                    <option value="corporate_minimal">Swiss Corporate Minimal</option>
-                  </select>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Стиль:</span>
+                    <select
+                      value={project?.visualStyle || 'isometric_3d'}
+                      onChange={(e) => {
+                        const newStyle = e.target.value as VisualStyle;
+                        if (project) {
+                          setProject({ ...project, visualStyle: newStyle });
+                          handleRegenerateStoryboard(newStyle, targetSceneCount);
+                        }
+                      }}
+                      style={{
+                        backgroundColor: 'var(--bg-input)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-medium)',
+                        borderRadius: '8px',
+                        padding: '6px 12px',
+                        fontSize: '13px'
+                      }}
+                    >
+                      <option value="isometric_3d">3D Изометрия (Bloomberg Tech)</option>
+                      <option value="cinematic_realistic">Кинематографичный 8K</option>
+                      <option value="dark_tech_hud">Cyberpunk Dark Tech / HUD</option>
+                      <option value="corporate_minimal">Swiss Corporate Minimal</option>
+                    </select>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>Глубина:</span>
+                    <select
+                      value={targetSceneCount}
+                      onChange={(e) => {
+                        const cnt = parseInt(e.target.value, 10) || 8;
+                        setTargetSceneCount(cnt);
+                      }}
+                      style={{
+                        backgroundColor: 'var(--bg-input)',
+                        color: 'var(--text-primary)',
+                        border: '1px solid var(--border-medium)',
+                        borderRadius: '8px',
+                        padding: '6px 12px',
+                        fontSize: '13px'
+                      }}
+                    >
+                      <option value={8}>8 сцен • Детальный аудит (Рекомендуется)</option>
+                      <option value={10}>10 сцен • Глубокое расследование</option>
+                      <option value={12}>12 сцен • Максимальная детализация</option>
+                      <option value={6}>6 сцен • Экспресс-версия</option>
+                    </select>
+                  </div>
                 </div>
 
-                <button
-                  onClick={() => handleRegenerateStoryboard()}
-                  disabled={isGeneratingScenes}
-                  className="button-primary"
-                  style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', fontSize: '13px' }}
-                >
-                  <Wand2 size={16} className={isGeneratingScenes ? 'animate-spin' : ''} />
-                  {isGeneratingScenes ? 'AI Режиссер пишет...' : 'Переписать сценарий с AI'}
-                </button>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button
+                    onClick={handleAddScene}
+                    disabled={isGeneratingScenes}
+                    className="btn-secondary"
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px' }}
+                  >
+                    <Plus size={15} />
+                    Добавить сцену
+                  </button>
+
+                  <button
+                    onClick={() => handleRegenerateStoryboard(project?.visualStyle, targetSceneCount)}
+                    disabled={isGeneratingScenes}
+                    className="button-primary"
+                    style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', fontSize: '13px' }}
+                  >
+                    <Wand2 size={16} className={isGeneratingScenes ? 'animate-spin' : ''} />
+                    {isGeneratingScenes ? 'AI Режиссер пишет...' : `Переписать (${targetSceneCount} сцен)`}
+                  </button>
+                </div>
               </div>
 
               {/* Scenes List */}
@@ -1110,6 +1236,28 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
                           >
                             Сменить спикера
                           </button>
+
+                          {project.scenes.length > 2 && (
+                            <button
+                              onClick={() => handleDeleteScene(scene.id)}
+                              title="Удалить сцену"
+                              style={{
+                                background: 'transparent',
+                                border: '1px solid rgba(244, 63, 94, 0.3)',
+                                color: '#F43F5E',
+                                padding: '4px 8px',
+                                borderRadius: '6px',
+                                fontSize: '11px',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                            >
+                              <Trash2 size={12} />
+                              Удалить
+                            </button>
+                          )}
                         </div>
                       </div>
 
@@ -1166,19 +1314,21 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
                 <div style={{ display: 'flex', gap: '10px' }}>
                   <button
                     onClick={() => handleGenerateAllImages('infographic')}
+                    disabled={isGeneratingAllImages}
                     className="btn-secondary"
                     style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 14px', fontSize: '13px' }}
                   >
                     <BarChart3 size={15} color="#10B981" />
-                    Все сцены в Инфографику
+                    {isGeneratingAllImages ? 'Создаем инфографику...' : 'Все сцены в Инфографику'}
                   </button>
                   <button
                     onClick={() => handleGenerateAllImages('ai')}
+                    disabled={isGeneratingAllImages}
                     className="button-primary"
                     style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 16px', fontSize: '13px' }}
                   >
                     <Sparkles size={15} />
-                    Сгенерировать 3D-кадры
+                    {isGeneratingAllImages ? 'Генерация...' : 'Сгенерировать 3D-кадры'}
                   </button>
                 </div>
               </div>
@@ -1232,9 +1382,29 @@ export const AIVideoStudioModal: React.FC<AIVideoStudioModalProps> = ({
                             }}
                           />
                         ) : (
-                          <div style={{ textAlign: 'center', padding: '20px' }}>
-                            <ImageIcon size={36} color="var(--text-muted)" style={{ margin: '0 auto 8px' }} />
+                          <div style={{ textAlign: 'center', padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                            <ImageIcon size={32} color="var(--text-muted)" />
                             <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Кадр не установлен</span>
+                            <button
+                              onClick={() => handleGenerateImageForScene(scene, 'infographic')}
+                              disabled={isGen}
+                              style={{
+                                padding: '5px 12px',
+                                backgroundColor: 'rgba(16, 185, 129, 0.2)',
+                                border: '1px solid rgba(16, 185, 129, 0.4)',
+                                borderRadius: '6px',
+                                color: '#6EE7B7',
+                                fontSize: '11px',
+                                fontWeight: '600',
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '5px'
+                              }}
+                            >
+                              <BarChart3 size={12} />
+                              {isGen ? 'Генерация...' : 'Создать карту данных 16:9'}
+                            </button>
                           </div>
                         )}
 
